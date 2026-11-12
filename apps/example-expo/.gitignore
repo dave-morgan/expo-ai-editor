@@ -1,0 +1,6 @@
+.expo/
+.expo-ai/
+dist/
+web-build/
+ios/
+android/

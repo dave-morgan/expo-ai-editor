@@ -1,0 +1,15 @@
+{
+  "host": "127.0.0.1",
+  "port": 8790,
+  "projects": [
+    {
+      "id": "example-expo",
+      "name": "Expo AI Example",
+      "root": "./apps/example-expo",
+      "t3Project": "."
+    }
+  ],
+  "screenshots": { "enabled": true, "dir": ".expo-ai/screenshots", "maxBytes": 4500000 },
+  "t3": { "pollIntervalMs": 2000, "timeoutMs": 30000 },
+  "pairing": { "codeTtlSeconds": 600, "tokenTtlHours": 12 }
+}
