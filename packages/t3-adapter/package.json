@@ -1,0 +1,30 @@
+{
+  "name": "@expo-ai/t3-adapter",
+  "version": "0.1.0",
+  "description": "T3 Code CLI adapter for Expo AI Inspector bridges.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@expo-ai/protocol": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

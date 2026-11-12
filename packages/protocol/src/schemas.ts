@@ -334,3 +334,6 @@ export const PairResponseSchema = z.object({
   projectId: SafeIdSchema,
 });
 export type PairResponse = z.infer<typeof PairResponseSchema>;
+
+export type FeedbackInput = z.input<typeof FeedbackSchema>;
+export type SelectionInput = z.input<typeof SelectionSchema>;
