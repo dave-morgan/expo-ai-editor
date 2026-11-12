@@ -1,0 +1,60 @@
+{
+  "name": "expo-ai-inspector",
+  "version": "0.1.0",
+  "description": "Development-only overlay for Expo apps: select an element, speak a change, send it to your coding agent via expo-ai-bridge.",
+  "license": "MIT",
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "react-native": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "react-native": "./src/index.ts",
+      "default": "./build/index.js"
+    },
+    "./babel": "./babel.js",
+    "./app.plugin.js": "./app.plugin.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["build", "src", "babel.js", "app.plugin.js", "!src/**/__tests__"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@expo-ai/protocol": "workspace:*",
+    "@expo-ai/inspector-transform": "workspace:*"
+  },
+  "peerDependencies": {
+    "expo": ">=54",
+    "react": ">=19",
+    "react-native": ">=0.81",
+    "expo-constants": "*",
+    "expo-speech-recognition": ">=2",
+    "react-native-view-shot": ">=4",
+    "expo-secure-store": "*",
+    "expo-router": "*"
+  },
+  "peerDependenciesMeta": {
+    "expo-constants": { "optional": true },
+    "expo-speech-recognition": { "optional": true },
+    "react-native-view-shot": { "optional": true },
+    "expo-secure-store": { "optional": true },
+    "expo-router": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/react": "~19.3.0",
+    "expo": "~58.0.24",
+    "expo-constants": "~58.0.16",
+    "expo-router": "~58.0.31",
+    "expo-secure-store": "~58.0.3",
+    "expo-speech-recognition": "~58.0.1",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-view-shot": "6.1.1",
+    "react-test-renderer": "19.3.0"
+  },
+  "keywords": ["expo", "react-native", "inspector", "ai", "claude", "t3code", "devtools"]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@expo-ai/inspector-transform",
+  "version": "0.1.0",
+  "description": "Development-only Babel plugin that tags JSX elements with their source location for expo-ai-inspector.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@babel/core": "^7.20.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-typescript": "^7.27.0",
+    "@babel/plugin-syntax-jsx": "^7.27.0",
+    "@types/babel__core": "^7.20.5"
+  }
+}
