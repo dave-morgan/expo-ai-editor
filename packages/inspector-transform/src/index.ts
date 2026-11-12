@@ -61,6 +61,8 @@ export default function inspectorTransform(
       if (!filename) return;
       const normalized = filename.split(path.sep).join("/");
       if (normalized.includes("/node_modules/")) return;
+      // The inspector's own UI (e.g. when linked from a workspace) must not look like app code.
+      if (/\/expo-ai-inspector\/(src|build)\//.test(normalized)) return;
       if (this.opts.exclude?.some((pattern) => normalized.includes(pattern))) return;
       const root = this.opts.root ?? this.file.opts.root ?? this.file.opts.cwd ?? process.cwd();
       const relative = toPosixRelative(root, filename);

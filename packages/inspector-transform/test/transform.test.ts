@@ -44,6 +44,11 @@ describe("inspector-transform", () => {
     expect(out).not.toContain("__aiSource");
   });
 
+  it("does not tag the inspector's own sources", () => {
+    const out = run(`const a = <View />;`, path.join(root, "packages", "expo-ai-inspector", "src", "ui", "Panel.tsx"));
+    expect(out).not.toContain("__aiSource");
+  });
+
   it("does nothing in production builds", () => {
     const out = run(`const a = <View />;`, undefined, {}, { name: "metro", isDev: false });
     expect(out).not.toContain("__aiSource");

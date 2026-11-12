@@ -1,5 +1,5 @@
-import { watch } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { statSync, watch } from "node:fs";
+import { isAbsolute, join, posix } from "node:path";
 
 function normalize(file: string) {
   return file.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -11,7 +11,7 @@ export function isIgnoredChange(file: string) {
   const parts = path.split("/");
   return (
     parts.some((part) =>
-      ["node_modules", ".git", ".expo", ".expo-ai", "dist", "build"].includes(part),
+      ["node_modules", ".git", ".expo", ".expo-ai", "dist", "build", ".cxx", ".gradle", ".claude", ".codex", ".idea", ".vscode", ".turbo", ".cache"].includes(part),
     ) ||
     path === "android/.gradle" ||
     path.startsWith("android/.gradle/") ||
@@ -29,6 +29,24 @@ export function isNativeChange(file: string) {
     /\.podspec$/.test(path) ||
     /^Podfile[^/]*$/.test(posix.basename(path))
   );
+}
+
+/**
+ * fs.watch on Windows (and some Linux setups) also reports directories and files whose access
+ * time changed when an agent merely reads them. Keep only real modifications: regular files whose
+ * mtime moved recently, and paths that no longer exist (deletions).
+ */
+export function isRealModification(root: string, file: string, now = Date.now(), windowMs = 10_000): boolean {
+  try {
+    const stats = statSync(join(root, file));
+    if (stats.isDirectory()) return false;
+    return stats.mtimeMs >= now - windowMs;
+  } catch {
+    // Deleted or renamed away. Editors and agents write through short-lived temp files
+    // (no extension, *.tmp, *~, .#lock); those are noise, real deletions are kept.
+    const name = posix.basename(file.replaceAll("\\", "/"));
+    return !(!name.includes(".") || /\.(tmp|temp|swp)$|~$|^\.#/i.test(name));
+  }
 }
 
 export interface ChangeWatcher {
@@ -50,11 +68,14 @@ export function createChangeWatcher({
   onChange,
   watcherFactory = defaultWatcherFactory,
   debounceMs = 300,
+  filter = (file: string) => isRealModification(root, file),
 }: {
   root: string;
   onChange: (files: string[]) => void;
   watcherFactory?: WatcherFactory;
   debounceMs?: number;
+  /** Final check applied when a batch is flushed; injectable for tests. */
+  filter?: (file: string) => boolean;
 }): ChangeWatcher {
   const files = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -64,10 +85,10 @@ export function createChangeWatcher({
     if (files.size < 50) files.add(normalize(filename));
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      const batch = [...files];
+      const batch = [...files].filter((file) => filter(file));
       files.clear();
       timer = undefined;
-      onChange(batch);
+      if (batch.length > 0) onChange(batch);
     }, debounceMs);
     timer.unref?.();
   });

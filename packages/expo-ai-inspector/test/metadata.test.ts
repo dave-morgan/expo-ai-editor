@@ -147,6 +147,46 @@ describe("buildSelection", () => {
     expect(selection.confidenceNotes.join(" ")).toContain("src/components/ProfileHeader.tsx:42");
   });
 
+  it("ignores tags forwarded by {...props} spreads into library internals", () => {
+    const TextImpl = fn("Text");
+    const { byName } = buildTree({
+      tag: FiberTag.HostRoot,
+      type: null,
+      children: [
+        {
+          tag: FiberTag.FunctionComponent,
+          type: AppText,
+          name: "AppText",
+          props: { __aiSource: "app/index.tsx:20:8", children: "Hello" },
+          children: [
+            {
+              tag: FiberTag.ForwardRef,
+              type: { render: Text },
+              name: "OuterText",
+              owner: "AppText",
+              props: { __aiSource: "src/ui/AppText.tsx:16:9", children: "Hello" },
+              children: [
+                {
+                  // RN's Text forwards its props (including the tag) to an inner component.
+                  tag: FiberTag.FunctionComponent,
+                  type: TextImpl,
+                  owner: "OuterText",
+                  props: { __aiSource: "src/ui/AppText.tsx:16:9", children: "Hello" },
+                  children: [{ tag: FiberTag.HostComponent, type: "RCTText", name: "host", props: { children: "Hello" } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const selection = buildSelection({ host: byName.get("host")!, bounds });
+    expect(selection.componentName).toBe("AppText");
+    expect(selection.source).toEqual({ file: "src/ui/AppText.tsx", line: 16, column: 9 });
+    expect(selection.confidence).toBe("high");
+    expect(selection.confidenceNotes.join(" ")).toContain("app/index.tsx:20");
+  });
+
   it("never fabricates a source when nothing is tagged", () => {
     const { byName } = buildTree({
       tag: FiberTag.HostRoot,

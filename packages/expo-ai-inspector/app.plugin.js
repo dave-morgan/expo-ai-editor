@@ -18,7 +18,7 @@ const withExpoAiInspector = (config, props) => {
   const options = props || {};
   const plugins = [];
 
-  let hasSpeech = false;
+  let hasSpeech;
   try {
     require.resolve("expo-speech-recognition/app.plugin.js", { paths: [config._internal?.projectRoot ?? process.cwd()] });
     hasSpeech = true;

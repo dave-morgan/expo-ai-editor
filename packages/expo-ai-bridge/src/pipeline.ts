@@ -36,6 +36,8 @@ export class FeedbackPipeline {
   private queues = new Map<string, Request[]>();
   private workers = new Set<string>();
   private watchers = new Map<string, { close(): void }>();
+  /** Fast Refresh often lands before the debounced file watcher reports the change. */
+  private pendingRefresh = new Map<string, { kind: "applied" | "full-reload" | "error"; message?: string; at: number }>();
   private sleepers = new Map<ReturnType<typeof setTimeout>, () => void>();
   private stopped = false;
   constructor(
@@ -325,11 +327,16 @@ export class FeedbackPipeline {
         `${native.join(", ")} may need \`npx expo prebuild\` / a new development build`,
         native,
       );
+    const pending = this.pendingRefresh.get(project);
+    this.pendingRefresh.delete(project);
+    if (pending && this.now() - pending.at <= 5000)
+      this.emit(r, pending.kind === "error" ? "refresh_failed" : "refresh_observed", pending.message);
   }
   refresh(project: string, kind: "applied" | "full-reload" | "error", message?: string) {
     const r = [...this.requests.values()].reverse().find((r) => r.project.id === project);
     if (r?.sourceChanged)
       this.emit(r, kind === "error" ? "refresh_failed" : "refresh_observed", message);
+    else if (r) this.pendingRefresh.set(project, { kind, ...(message ? { message } : {}), at: this.now() });
   }
   stop() {
     this.stopped = true;

@@ -140,11 +140,24 @@ export function buildSelection(input: BuildSelectionInput): Selection {
   const path: FiberLike[] = [];
   for (let node: FiberLike | null = host; node; node = node.return) path.push(node);
 
+  // Components often forward `{...props}` to inner components, copying the tag down the tree.
+  // The element was created where the tag value first appears, i.e. the highest fiber on the path
+  // that carries it; lower copies are ignored.
+  const originOfTag = new Map<string, FiberLike>();
+  for (const fiber of path) {
+    const tag = getProps(fiber)[SOURCE_PROP];
+    if (typeof tag === "string") originOfTag.set(tag, fiber); // later = higher in the tree
+  }
+  const isForwardedCopy = (fiber: FiberLike) => {
+    const tag = getProps(fiber)[SOURCE_PROP];
+    return typeof tag === "string" && originOfTag.get(tag) !== fiber;
+  };
+
   let selected: { fiber: FiberLike; source: SourceLocation; origin: SourceOrigin; hops: number } | null = null;
   let compositeHops = 0;
   const userDefined = new Map<FiberLike, string>(); // owner fiber -> file where its JSX lives
   for (const fiber of path) {
-    const found = sourceFromFiber(fiber);
+    const found = isForwardedCopy(fiber) ? null : sourceFromFiber(fiber);
     if (found) {
       if (!selected) selected = { fiber, ...found, hops: compositeHops };
       const owner = getOwner(fiber) ?? nearestCompositeAbove(fiber);
@@ -162,7 +175,7 @@ export function buildSelection(input: BuildSelectionInput): Selection {
     // Keep the first few library frames for context (e.g. Text, Pressable) but drop deep
     // navigation/provider internals that only add noise.
     if (isLibrary && frames.filter((f) => f.isLibrary).length >= 3) continue;
-    const callSite = sourceFromFiber(fiber)?.source;
+    const callSite = isForwardedCopy(fiber) ? undefined : sourceFromFiber(fiber)?.source;
     frames.push({ name: name.slice(0, 200), isLibrary, ...(callSite ? { source: callSite } : {}) });
     if (frames.length >= LIMITS.maxHierarchyDepth) break;
   }

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createChangeWatcher, isIgnoredChange, isNativeChange } from "../src/changes.js";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createChangeWatcher, isIgnoredChange, isNativeChange, isRealModification } from "../src/changes.js";
 
 describe("source changes", () => {
   it.each([
@@ -69,5 +72,21 @@ describe("source changes", () => {
     expect(onChange).toHaveBeenCalledTimes(2);
     expect(close).toHaveBeenCalledOnce();
     vi.useRealTimers();
+  });
+  it("keeps only real file modifications (not directories or read-only access events)", () => {
+    const root = mkdtempSync(join(tmpdir(), "expo-ai-changes-"));
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "fresh.tsx"), "x");
+    writeFileSync(join(root, "src", "old.tsx"), "x");
+    const past = new Date(Date.now() - 60_000);
+    utimesSync(join(root, "src", "old.tsx"), past, past);
+    expect(isRealModification(root, "src")).toBe(false);
+    expect(isRealModification(root, "src/old.tsx")).toBe(false);
+    expect(isRealModification(root, "src/fresh.tsx")).toBe(true);
+    expect(isRealModification(root, "src/deleted.tsx")).toBe(true);
+    expect(isRealModification(root, "src/components/sedun7G2x")).toBe(false);
+    expect(isRealModification(root, "src/Header.tsx.tmp")).toBe(false);
+    expect(isIgnoredChange(".claude/settings.json")).toBe(true);
+    expect(isIgnoredChange("android/app/.cxx/x.o")).toBe(true);
   });
 });

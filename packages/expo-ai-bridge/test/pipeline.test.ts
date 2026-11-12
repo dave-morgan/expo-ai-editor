@@ -66,10 +66,12 @@ it("attributes changes and refresh to the latest request even within one millise
   pipeline.refresh("app", "applied");
   expect(statuses.at(-1)?.phase).toBe("agent_completed");
   pipeline.changed("app", ["app.json"]);
-  expect(statuses.at(-1)).toMatchObject({
-    requestId: "request_2",
-    phase: "native_rebuild_required",
-  });
+  // The early refresh is buffered and reported once the change is attributed.
+  expect(statuses.slice(-3).map((s) => [s.requestId, s.phase])).toEqual([
+    ["request_2", "source_changed"],
+    ["request_2", "native_rebuild_required"],
+    ["request_2", "refresh_observed"],
+  ]);
   pipeline.refresh("app", "error", "Refresh failed");
   expect(statuses.at(-1)).toMatchObject({
     requestId: "request_2",

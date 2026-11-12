@@ -11,7 +11,7 @@ export type CommandRunner = (
 export function quoteWindowsCommand(command: string, args: string[]): string {
   return [command, ...args]
     .map((argument) => {
-      if (!/^[A-Za-z0-9._:\/\\ @=-]+$/.test(argument)) {
+      if (!/^[A-Za-z0-9._:/\\ @=-]+$/.test(argument)) {
         throw new AdapterProtocolError("Unsafe character in Windows T3 CLI argument");
       }
       return `"${argument}"`;

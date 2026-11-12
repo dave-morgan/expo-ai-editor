@@ -44,6 +44,8 @@ export interface AIInspectorProps {
   defaultSettings?: Partial<InspectorSettings>;
   /** Where the floating button sits. */
   buttonPosition?: "bottom-right" | "bottom-left" | "top-right" | "top-left";
+  /** Log selections and bridge status to the Metro console. */
+  debug?: boolean;
   /** Opt in to rendering outside `__DEV__`. Never enable this in store builds. */
   dangerouslyEnableInProduction?: boolean;
 }
@@ -81,7 +83,7 @@ function resolveProjectId(explicit?: string): string {
 
 function resolveBridgeUrl(explicit: string | undefined, port: number | undefined): string | null {
   if (explicit) return explicit;
-  let scriptURL: string | null = null;
+  let scriptURL: string | null;
   try {
     scriptURL = NativeModules?.SourceCode?.getConstants?.().scriptURL ?? NativeModules?.SourceCode?.scriptURL ?? null;
   } catch {
@@ -132,6 +134,7 @@ function InspectorRoot(props: AIInspectorProps) {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [refreshSupported, setRefreshSupported] = useState(false);
   const tokenStore = useMemo(() => createTokenStore(), []);
+  const lastThreadRef = useRef<string | null>(null);
   const clientId = useMemo(() => `insp-${createRequestId().slice(0, 13)}`, []);
 
   const client = useMemo(() => {
@@ -152,8 +155,19 @@ function InspectorRoot(props: AIInspectorProps) {
       return;
     }
     const offState = client.on("state", setConnection);
-    const offThreads = client.on("threads", setThreads);
-    const offMessage = client.on("message", (message: ServerMessage) => dispatch({ type: "server", message, now: Date.now() }));
+    const offThreads = client.on("threads", (next) => {
+      // The bridge keeps the thread choice in memory; restore ours after a bridge restart.
+      const remembered = lastThreadRef.current;
+      if (!next.selectedThreadId && remembered && next.threads.some((t) => t.threadId === remembered)) {
+        client.send({ type: "threads.select", threadId: remembered });
+      }
+      if (next.selectedThreadId) lastThreadRef.current = next.selectedThreadId;
+      setThreads(next);
+    });
+    const offMessage = client.on("message", (message: ServerMessage) => {
+      if (props.debug && message.type === "request.status") console.log(`[expo-ai-inspector] ${message.requestId} ${message.phase}${message.detail ? `: ${message.detail}` : ""}`);
+      dispatch({ type: "server", message, now: Date.now() });
+    });
     void client.start();
     return () => {
       offState();
@@ -161,7 +175,7 @@ function InspectorRoot(props: AIInspectorProps) {
       offMessage();
       client.stop();
     };
-  }, [client]);
+  }, [client, props.debug]);
 
   // Report Fast Refresh / compile errors for requests whose files changed.
   useEffect(() => {
@@ -290,6 +304,7 @@ function InspectorRoot(props: AIInspectorProps) {
           flattenStyle: StyleSheet.flatten as (style: unknown) => unknown,
           hitTestStrategy: hit.strategy,
         });
+        if (props.debug) console.log(`[expo-ai-inspector] selected via ${hit.strategy}: ${JSON.stringify(selection)}`);
         dispatch({ type: "selected", selection });
         return true;
       } catch (error) {
@@ -297,7 +312,7 @@ function InspectorRoot(props: AIInspectorProps) {
         return false;
       }
     },
-    [screen],
+    [screen, props.debug],
   );
 
   const pressStart = useRef<{ x: number; y: number; timer: ReturnType<typeof setTimeout> | null; long: boolean } | null>(null);

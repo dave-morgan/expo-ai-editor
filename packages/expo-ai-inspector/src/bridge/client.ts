@@ -163,7 +163,7 @@ export class BridgeClient {
         }),
       });
     } catch (error) {
-      throw new Error(`Cannot reach bridge at ${this.options.bridgeUrl}: ${(error as Error).message}`);
+      throw new Error(`Cannot reach bridge at ${this.options.bridgeUrl}: ${(error as Error).message}`, { cause: error });
     }
     const body = (await response.json().catch(() => ({}))) as { token?: string; message?: string; error?: string };
     if (!response.ok || !body.token) {

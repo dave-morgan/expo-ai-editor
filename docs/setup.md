@@ -139,4 +139,6 @@ prompt.
 | Status stuck at "Queued … retrying" | T3 Code is not running; start the desktop app or `t3 serve` |
 | Mic disabled with "On-device speech recognition is not supported" | Device lacks on-device recognition for the locale; type instead, download the model (Android 13+ button), or set `requireOnDeviceRecognition={false}` to allow the OS network recognizer |
 | "Native rebuild required" | The agent changed `app.json`, `package.json` or native folders; rebuild the dev client |
+| Windows Android build: `Filename longer than 260 characters` (ninja) | Build from a short path: `subst R: C:\path\to\repo`, then build in `R:\apps\example-expo\android` (optionally `-PreactNativeArchitectures=x86_64` for the emulator) |
+| Gradle stalls downloading a Build-Tools version | Add `android.buildToolsVersion=<installed version>` to `android/gradle.properties` |
 | Selection hits the wrong view inside a Modal | Native modals are separate windows; see [limitations](./limitations.md) |

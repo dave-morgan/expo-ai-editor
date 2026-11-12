@@ -114,11 +114,12 @@ export function inspectorReducer(state: InspectorState, action: InspectorAction)
       return { ...state, selecting: false, error: action.message };
     case "clearSelection":
       return { ...state, selection: null, mode: "selecting" };
-    case "setTranscript":
+    case "setTranscript": {
       if (!action.edited) return { ...state, transcript: action.text };
       // Keyboard edits to a dictated transcript are recorded as "voice-edited".
       const dictated = state.inputMethod !== "typed" && state.transcript.trim().length > 0;
       return { ...state, transcript: action.text, inputMethod: dictated ? "voice-edited" : "typed" };
+    }
     case "appendVoice": {
       const text = state.transcript.trim() ? `${state.transcript.trim()} ${action.text}` : action.text;
       return { ...state, transcript: text, inputMethod: state.inputMethod === "typed" && state.transcript.trim() ? "voice-edited" : "voice" };
