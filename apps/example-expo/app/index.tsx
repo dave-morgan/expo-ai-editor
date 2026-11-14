@@ -19,7 +19,7 @@ export default function Home() {
         </AppText>
         <AppText variant="display">Try it on any element</AppText>
         <AppText tone="muted">
-          Tap the purple button, select something on screen, then say what to change. The instruction goes to your T3 Code
+          Tap the top indicator, select something on screen, then hold the indicator to say what to change. The instruction goes to your T3 Code
           thread and Fast Refresh shows the result here.
         </AppText>
       </View>
@@ -42,7 +42,7 @@ export default function Home() {
       ))}
       <Card style={styles.tip}>
         <AppText variant="caption" tone="brand">
-          Tip: hold on an element while selecting to start dictating immediately.
+          Tip: tap the indicator again to use the app normally. Pull down from it for controls.
         </AppText>
       </Card>
     </Screen>

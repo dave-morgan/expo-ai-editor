@@ -62,7 +62,7 @@ export default function RootLayout() {
 
 Props: `projectId` (default: your Expo `slug`), `bridgeUrl` (default: Metro host + port 8790),
 `bridgePort`, `locale` (default `en-AU`), `requireOnDeviceRecognition` (default `true`),
-`defaultSettings` (`{ screenshots, autoSubmit, mode }`), `buttonPosition`.
+`defaultSettings` (`{ screenshots, autoSubmit, mode }`), `indicatorTopInset` (override the top of the indicator touch target, in points).
 
 Rebuild the development client once (native modules changed), then clear Metro's cache:
 
@@ -106,7 +106,7 @@ worktree `t3Project` path to the main checkout, which is the path T3 Code knows.
 
 ## 3. Pair the device
 
-Open the app, tap the purple button. The panel shows **Pair**: the bridge URL is pre-filled from the
+Open the app, pull down from the thin indicator line below the status bar. The panel shows **Pair**: the bridge URL is pre-filled from the
 Metro host; type the 6-digit code from the bridge terminal. The session token is stored in the
 keychain (with `expo-secure-store`) for 12 hours.
 
@@ -117,11 +117,23 @@ terminal or run `npx expo-ai-bridge pair-code` in another terminal.
 
 ## 4. Use it
 
-1. Tap the purple button, then tap an element (or hold it to select and dictate at once).
-2. Check the selection card: component, `file:line`, confidence.
-3. Tap the header to choose the T3 thread (remembered for the bridge session).
-4. Tap the microphone (or hold it to talk). Edit the transcript if needed.
-5. **Send to agent**. Watch: Delivered → Agent → Files changed → Refreshed.
+1. Tap the thin top indicator to enable selection. Tap an app element to outline it.
+2. Hold the indicator to dictate: it turns cyan and pulses while listening. Release to stop.
+3. Review the transcript in the panel, edit if needed, and choose **Send to agent**.
+4. Tap the indicator again to disable selection and use the app normally. Your draft and selection are kept.
+5. Pull down from the indicator whenever you need pairing, thread selection, typing, settings, or history.
+
+The indicator is a 4-point line with a centered 112-by-44-point touch target; it does not cover
+corner navigation buttons. Gray means selection off; violet means selection on; cyan means
+listening, amber means disconnected or working, green means refresh observed, and red means an
+error (open controls for details). Screen readers expose toggle, dictation, and controls actions.
+Reduced motion keeps the recording color steady. The indicator sits below the status bar;
+set `indicatorTopInset` if your host layout needs a different position.
+
+Selecting an element leaves the panel closed. While selection is enabled, app taps select
+rather than activate controls. Disable selection to scroll or interact normally. Voice input
+opens the panel for review; the existing **Auto-submit** setting can explicitly opt into sending
+final transcripts immediately. Holding an inactive indicator neither enables selection nor records.
 
 ## Running the example app
 

@@ -28,4 +28,7 @@ export const optional = {
     tryRequire(() => require("react-native-view-shot")),
   secureStore: (): SecureStoreModule | null => tryRequire(() => require("expo-secure-store") as SecureStoreModule),
   router: (): { usePathname?: () => string } | null => tryRequire(() => require("expo-router")),
+  /** Static insets only (no provider needed): used to keep the panel above the gesture bar. */
+  safeArea: (): { initialWindowMetrics?: { insets: { bottom: number } } | null } | null =>
+    tryRequire(() => require("react-native-safe-area-context")),
 };

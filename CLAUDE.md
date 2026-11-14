@@ -11,6 +11,7 @@ Monorepo: Expo inspector overlay → expo-ai-bridge → T3 Code (`t3 thread send
 ## Status (2026-11-14)
 - All packages built; 222 tests pass; typecheck + lint clean.
 - Issue #1 (physical Pixel 6 integration lessons) implemented: /health probe + "not the bridge" errors in pair sheet, `expo-ai-bridge pair-code` + auto code rotation (control file ~/.expo-ai-bridge/control-<port>.json), worktree→main-checkout t3Project mapping, `.expo-ai/.gitignore` self-ignore, `@dave-morgan/expo-ai-inspector/metro` withExpoAI, online-recognition opt-in on offline-model failure, CI + release workflows (GitHub Packages via GITHUB_TOKEN; public release tarballs), docs/existing-app.md, docs/physical-android.md.
+- Panel redesign (branch feat/indicator-controls, uncommitted): draggable sheet (¼/½/¾, default ½; src/ui/sheet.ts), lifecycle rail (requestLifecycle in inspector-state.ts), settings behind ⋯. Checked on emulator except rail with a live request (no scratch T3 thread).
 - Verified: emulator E2E, physical Android (per issue #1, before these fixes). Not verified: iOS, on-device dictation, `--lan`, issue #1 fixes on device.
 
 ## Local-machine quirks (not in repo)

@@ -1,6 +1,6 @@
 {
   "name": "@dave-morgan/expo-ai-inspector-transform",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Development-only Babel plugin that tags JSX elements with their source location for expo-ai-inspector.",
   "license": "MIT",
   "main": "./dist/index.js",

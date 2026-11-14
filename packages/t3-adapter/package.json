@@ -1,6 +1,6 @@
 {
   "name": "@dave-morgan/expo-ai-t3-adapter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "T3 Code CLI adapter for Expo AI Inspector bridges.",
   "license": "MIT",
   "type": "module",

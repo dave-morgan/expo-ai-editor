@@ -38,19 +38,19 @@ packed tarballs (`workspace:*` already rewritten). Point the two packages, and t
 `@dave-morgan/expo-ai-*` packages they depend on, at the release URLs:
 
 ```jsonc
-// package.json (replace 0.1.0 with the release you want)
+// package.json (replace 0.2.0 with the release you want)
 {
   "dependencies": {
-    "@dave-morgan/expo-ai-inspector": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.1.0/dave-morgan-expo-ai-inspector-0.1.0.tgz",
+    "@dave-morgan/expo-ai-inspector": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.2.0/dave-morgan-expo-ai-inspector-0.2.0.tgz",
   },
   "devDependencies": {
-    "@dave-morgan/expo-ai-bridge": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.1.0/dave-morgan-expo-ai-bridge-0.1.0.tgz",
+    "@dave-morgan/expo-ai-bridge": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.2.0/dave-morgan-expo-ai-bridge-0.2.0.tgz",
   },
   // npm and bun: "overrides"; pnpm: "pnpm.overrides"; yarn: "resolutions"
   "overrides": {
-    "@dave-morgan/expo-ai-protocol": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.1.0/dave-morgan-expo-ai-protocol-0.1.0.tgz",
-    "@dave-morgan/expo-ai-inspector-transform": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.1.0/dave-morgan-expo-ai-inspector-transform-0.1.0.tgz",
-    "@dave-morgan/expo-ai-t3-adapter": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.1.0/dave-morgan-expo-ai-t3-adapter-0.1.0.tgz",
+    "@dave-morgan/expo-ai-protocol": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.2.0/dave-morgan-expo-ai-protocol-0.2.0.tgz",
+    "@dave-morgan/expo-ai-inspector-transform": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.2.0/dave-morgan-expo-ai-inspector-transform-0.2.0.tgz",
+    "@dave-morgan/expo-ai-t3-adapter": "https://github.com/dave-morgan/expo-ai-editor/releases/download/v0.2.0/dave-morgan-expo-ai-t3-adapter-0.2.0.tgz",
   },
 }
 ```
@@ -187,7 +187,7 @@ npx expo-ai-bridge start
 ## Releasing
 
 Maintainers: keep all five package versions in sync, then push the matching `v*` tag
-(for example, `v0.1.0`). The release workflow builds and tests, publishes all five packages to
+(for example, `v0.2.0`). The release workflow builds and tests, publishes all five packages to
 GitHub Packages with the repository's automatic `GITHUB_TOKEN` (`packages: write`), and attaches
 the packed tarballs to a public GitHub release. No `NPM_TOKEN` secret is needed.
 

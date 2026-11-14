@@ -39,11 +39,17 @@ type ModuleApi = SpeechModule["ExpoSpeechRecognitionModule"];
 
 /** Capability check, separated from React for unit testing. */
 export async function checkSpeechSupport(
-  module: Pick<ModuleApi, "isRecognitionAvailable" | "supportsOnDeviceRecognition" | "getSupportedLocales"> | null,
+  module: Pick<
+    ModuleApi,
+    "isRecognitionAvailable" | "supportsOnDeviceRecognition" | "getSupportedLocales"
+  > | null,
   options: { locale: string; requireOnDevice: boolean; platform: string },
 ): Promise<SpeechSupport> {
   if (!module) {
-    return { ok: false, reason: "expo-speech-recognition is not installed in this development build." };
+    return {
+      ok: false,
+      reason: "expo-speech-recognition is not installed in this development build.",
+    };
   }
   if (!module.isRecognitionAvailable()) {
     return { ok: false, reason: "Speech recognition is not available on this device." };
@@ -51,7 +57,8 @@ export async function checkSpeechSupport(
   if (options.requireOnDevice && !module.supportsOnDeviceRecognition()) {
     return {
       ok: false,
-      reason: "On-device speech recognition is not supported here. Type your instruction instead (audio is never uploaded).",
+      reason:
+        "On-device speech recognition is not supported here. Type your instruction instead (audio is never uploaded).",
       onlineAvailable: true,
     };
   }
@@ -64,7 +71,12 @@ export async function checkSpeechSupport(
     if (all.length > 0 && !all.includes(wanted) && !installed.includes(wanted)) {
       return { ok: false, reason: `The speech recognizer does not support ${options.locale}.` };
     }
-    if (options.requireOnDevice && options.platform === "android" && installed.length > 0 && !installed.includes(wanted)) {
+    if (
+      options.requireOnDevice &&
+      options.platform === "android" &&
+      installed.length > 0 &&
+      !installed.includes(wanted)
+    ) {
       return {
         ok: false,
         reason: `The on-device model for ${options.locale} is not installed. ${TYPING_HINT}`,
@@ -79,8 +91,10 @@ export async function checkSpeechSupport(
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
-  "not-allowed": "Microphone or speech permission was denied. Enable it in Settings, or type instead.",
-  "language-not-supported": "This language is not supported for on-device recognition. Type instead.",
+  "not-allowed":
+    "Microphone or speech permission was denied. Enable it in Settings, or type instead.",
+  "language-not-supported":
+    "This language is not supported for on-device recognition. Type instead.",
   "service-not-allowed": "On-device recognition is unavailable. Type your instruction instead.",
   network: "The recognizer needed the network, which is disabled for on-device mode. Type instead.",
   "no-speech": "No speech detected. Try again.",
@@ -107,7 +121,10 @@ export function describeModelDownloadFailure(locale: string, raw?: string): stri
   );
 }
 
-const describeModelDownloadResult = (locale: string, result: { status: string; message?: string }): string => {
+const describeModelDownloadResult = (
+  locale: string,
+  result: { status: string; message?: string },
+): string => {
   switch (result.status) {
     case "download_success":
       return `The ${locale} model is installed. Tap the mic to dictate.`;
@@ -133,7 +150,9 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
   const [status, setStatus] = useState<SpeechStatus>(Speech ? "idle" : "unavailable");
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [support, setSupport] = useState<SpeechSupport | null>(Speech ? null : { ok: false, reason: "expo-speech-recognition is not installed." });
+  const [support, setSupport] = useState<SpeechSupport | null>(
+    Speech ? null : { ok: false, reason: "expo-speech-recognition is not installed." },
+  );
   /** Per-session, user-chosen opt-in to network recognition. Never set automatically. */
   const [online, setOnline] = useState(false);
   const [modelDownloadFailed, setModelDownloadFailed] = useState(false);
@@ -141,6 +160,20 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
   const onFinalRef = useRef(options.onFinal);
   onFinalRef.current = options.onFinal;
   const cancelled = useRef(false);
+  const startAttempt = useRef(0);
+  const running = useRef(false);
+  const recordingWanted = useRef(false);
+
+  useEffect(
+    () => () => {
+      startAttempt.current++;
+      cancelled.current = true;
+      recordingWanted.current = false;
+      if (running.current) Speech?.ExpoSpeechRecognitionModule.abort();
+      running.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -156,48 +189,79 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
     };
   }, [options.locale, requireOnDevice, platform]);
 
-  useSpeechEvent("start", () => setStatus("listening"));
+  useSpeechEvent("start", () => {
+    running.current = true;
+    if (!recordingWanted.current) {
+      cancelled.current = true;
+      Speech?.ExpoSpeechRecognitionModule.abort();
+      setStatus("stopping");
+      return;
+    }
+    setStatus("listening");
+  });
   useSpeechEvent("end", () => {
+    running.current = false;
+    recordingWanted.current = false;
     setStatus(Speech ? "idle" : "unavailable");
     setPartial("");
   });
-  useSpeechEvent("result", (event: { isFinal: boolean; results: Array<{ transcript: string }> }) => {
-    if (cancelled.current) return;
-    const transcript = event.results[0]?.transcript ?? "";
-    if (event.isFinal) {
-      setPartial("");
-      if (transcript.trim()) onFinalRef.current?.(transcript.trim());
-    } else {
-      setPartial(transcript);
-    }
-  });
+  useSpeechEvent(
+    "result",
+    (event: { isFinal: boolean; results: Array<{ transcript: string }> }) => {
+      if (cancelled.current) return;
+      const transcript = event.results[0]?.transcript ?? "";
+      if (event.isFinal) {
+        setPartial("");
+        if (transcript.trim()) onFinalRef.current?.(transcript.trim());
+      } else {
+        setPartial(transcript);
+      }
+    },
+  );
   useSpeechEvent("error", (event: { error: string; message: string }) => {
-    if (event.error === "aborted") return;
+    recordingWanted.current = false;
+    cancelled.current = true;
+    if (event.error === "aborted") {
+      setStatus(running.current ? "stopping" : "idle");
+      return;
+    }
     if (/offline model/i.test(event.message ?? "")) {
       setModelDownloadFailed(true);
       setError(describeModelDownloadFailure(options.locale, event.message));
     } else {
       setError(describeSpeechError(event.error, event.message));
     }
-    setStatus("idle");
+    setStatus(running.current ? "stopping" : "idle");
   });
 
   const start = useCallback(async () => {
-    if (!Speech) return;
+    if (!Speech) {
+      setError(`Speech recognition is not installed. ${TYPING_HINT}`);
+      return;
+    }
+    if (running.current) return;
+    const attempt = ++startAttempt.current;
     setError(null);
     cancelled.current = false;
     if (support && !support.ok) {
       setError(support.reason ?? "Speech recognition unavailable.");
       return;
     }
+    recordingWanted.current = true;
     const module = Speech.ExpoSpeechRecognitionModule;
-    const permission = await module.requestPermissionsAsync();
-    if (!permission.granted) {
-      setError(describeSpeechError("not-allowed"));
-      return;
-    }
     setStatus("starting");
     try {
+      let permission = await module.getPermissionsAsync();
+      if (attempt !== startAttempt.current) return;
+      if (!permission.granted) permission = await module.requestPermissionsAsync();
+      if (attempt !== startAttempt.current) return;
+      if (!permission.granted) {
+        recordingWanted.current = false;
+        setStatus("idle");
+        setError(describeSpeechError("not-allowed"));
+        return;
+      }
+      running.current = true;
       module.start({
         lang: options.locale,
         interimResults: true,
@@ -207,6 +271,9 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
         requiresOnDeviceRecognition: requireOnDevice,
       });
     } catch (startError) {
+      if (attempt !== startAttempt.current) return;
+      running.current = false;
+      recordingWanted.current = false;
       setStatus("idle");
       setError(`${(startError as Error).message} ${TYPING_HINT}`);
     }
@@ -214,26 +281,41 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
 
   const stop = useCallback(() => {
     if (!Speech) return;
-    setStatus("stopping");
-    Speech.ExpoSpeechRecognitionModule.stop();
+    startAttempt.current++;
+    recordingWanted.current = false;
+    if (running.current) {
+      setStatus("stopping");
+      Speech.ExpoSpeechRecognitionModule.stop();
+    } else setStatus("idle");
   }, []);
 
   const cancel = useCallback(() => {
     if (!Speech) return;
+    startAttempt.current++;
+    recordingWanted.current = false;
     cancelled.current = true;
     setPartial("");
-    Speech.ExpoSpeechRecognitionModule.abort();
+    if (running.current) {
+      setStatus("stopping");
+      Speech.ExpoSpeechRecognitionModule.abort();
+    } else setStatus("idle");
   }, []);
 
   const downloadModel = useCallback(async () => {
     if (!Speech) return;
     try {
-      const result = await Speech.ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: options.locale });
+      const result = await Speech.ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({
+        locale: options.locale,
+      });
       if (result.status === "download_success") {
         setModelDownloadFailed(false);
         // Re-check so the mic unblocks without restarting the app.
         setSupport(
-          await checkSpeechSupport(Speech.ExpoSpeechRecognitionModule, { locale: options.locale, requireOnDevice, platform }),
+          await checkSpeechSupport(Speech.ExpoSpeechRecognitionModule, {
+            locale: options.locale,
+            requireOnDevice,
+            platform,
+          }),
         );
       }
       setError(describeModelDownloadResult(options.locale, result));
@@ -251,7 +333,9 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
 
   /** Offer the explicit online opt-in only when the on-device requirement is what blocks dictation. */
   const onlineAvailable =
-    !!Speech && requireOnDevice && (modelDownloadFailed || (support !== null && !support.ok && !!support.onlineAvailable));
+    !!Speech &&
+    requireOnDevice &&
+    (modelDownloadFailed || (support !== null && !support.ok && !!support.onlineAvailable));
 
   return {
     status,
