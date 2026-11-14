@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { FeedbackSchema } from "@expo-ai/protocol";
-import { AdapterUnavailableError } from "@expo-ai/t3-adapter";
-import type { AgentAdapter } from "@expo-ai/t3-adapter";
+import { FeedbackSchema } from "@dave-morgan/expo-ai-protocol";
+import { AdapterUnavailableError } from "@dave-morgan/expo-ai-t3-adapter";
+import type { AgentAdapter } from "@dave-morgan/expo-ai-t3-adapter";
 import { FeedbackPipeline } from "../src/pipeline.js";
 import { loadConfig } from "../src/config.js";
 

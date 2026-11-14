@@ -1,4 +1,4 @@
-import type { AdapterCapabilities, DeliveryMode } from "@expo-ai/protocol";
+import type { AdapterCapabilities, DeliveryMode } from "@dave-morgan/expo-ai-protocol";
 
 export interface AgentThread {
   threadId: string;

@@ -18,7 +18,7 @@ to do work. Treat it like any development server that can trigger code changes.
   project within 10 seconds, or the socket is closed.
 - **Project allowlist.** Only projects in the bridge config exist. Threads can be restricted with
   `allowedThreadIds`.
-- **Validation and limits.** Every frame is validated against `@expo-ai/protocol` (zod). Frames are
+- **Validation and limits.** Every frame is validated against `@dave-morgan/expo-ai-protocol` (zod). Frames are
   capped at 8 MB, instructions at 4 000 characters, screenshots at ~4.5 MB (JPEG/PNG magic bytes
   checked, written only inside `<app>/.expo-ai/screenshots`). Ids that reach the CLI must match
   `[A-Za-z0-9][A-Za-z0-9._:-]*`.

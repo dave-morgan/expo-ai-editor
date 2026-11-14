@@ -25,6 +25,6 @@
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
-    "plugins": ["expo-router", "expo-secure-store", "expo-ai-inspector"]
+    "plugins": ["expo-router", "expo-secure-store", "@dave-morgan/expo-ai-inspector"]
   }
 }

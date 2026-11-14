@@ -1,4 +1,4 @@
-import { createRequestId, type DeliveryMode, type DeviceInfo, type ServerMessage, type ThreadSummary } from "@expo-ai/protocol";
+import { createRequestId, type DeliveryMode, type DeviceInfo, type ServerMessage, type ThreadSummary } from "@dave-morgan/expo-ai-protocol";
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   Dimensions,
@@ -13,7 +13,7 @@ import {
   useWindowDimensions,
   type GestureResponderEvent,
 } from "react-native";
-import { BridgeClient, type ConnectionState } from "./bridge/client";
+import { BridgeClient, probeBridge, type ConnectionState } from "./bridge/client";
 import { discoverBridgeUrl } from "./bridge/discovery";
 import { buildSelection } from "./inspection/metadata";
 import { hitTest } from "./inspection/hit-test";
@@ -355,7 +355,15 @@ function InspectorRoot(props: AIInspectorProps) {
     threads: threads.threads,
     selectedThreadId: threads.selectedThreadId,
     ...(threads.error ? { threadsError: threads.error } : {}),
-    speech: { status: speech.status, partial: speech.partial, error: speech.error, support: speech.support, locale },
+    speech: {
+      status: speech.status,
+      partial: speech.partial,
+      error: speech.error,
+      support: speech.support,
+      locale,
+      onDevice: speech.onDevice,
+      onlineAvailable: speech.onlineAvailable,
+    },
     screenshotsAvailable: screenshotsSupported(),
     refreshSupported,
     close: () => {
@@ -415,6 +423,9 @@ function InspectorRoot(props: AIInspectorProps) {
     unpair: () => void client?.unpair(),
     reconnect: () => void client?.reconnect(),
     downloadSpeechModel: () => void speech.downloadModel(),
+    allowOnlineSpeech: speech.allowOnline,
+    // Stable reference: the pair sheet re-probes when this changes.
+    probeBridge,
   };
 
   const selection = state.selection;

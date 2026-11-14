@@ -1,7 +1,7 @@
-import type { DeliveryMode, Selection, ThreadSummary } from "@expo-ai/protocol";
-import React, { useState } from "react";
+import type { DeliveryMode, Selection, ThreadSummary } from "@dave-morgan/expo-ai-protocol";
+import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import type { ConnectionState } from "../bridge/client";
+import type { BridgeProbe, ConnectionState } from "../bridge/client";
 import type { SpeechStatus, SpeechSupport } from "../platform/speech";
 import {
   agentStep,
@@ -29,6 +29,10 @@ export interface PanelController {
     error: string | null;
     support: SpeechSupport | null;
     locale: string;
+    /** False once the user opted in to online recognition for this session. */
+    onDevice: boolean;
+    /** Only the on-device requirement blocks dictation; offer the explicit online opt-in. */
+    onlineAvailable: boolean;
   };
   screenshotsAvailable: boolean;
   refreshSupported: boolean;
@@ -51,6 +55,9 @@ export interface PanelController {
   unpair(): void;
   reconnect(): void;
   downloadSpeechModel(): void;
+  allowOnlineSpeech(): void;
+  /** GET /health on a candidate bridge URL, so the pair sheet can say what it actually reached. */
+  probeBridge(url: string): Promise<BridgeProbe>;
 }
 
 export function connectionSummary(connection: ConnectionState): { label: string; color: string } {
@@ -92,7 +99,11 @@ export function Panel({ c, bottomInset }: { c: PanelController; bottomInset: num
               {thread ? thread.title : c.connection.status === "connected" ? "Choose a T3 thread" : conn.label}
             </Text>
             <Text style={type.caption} numberOfLines={1}>
-              {c.connection.status === "connected" ? `${c.connection.projectName} · ${thread ? thread.status : "no thread"}` : c.bridgeUrl ?? "Bridge URL unknown"}
+              {c.connection.status === "connected"
+                ? `${c.connection.projectName} · ${thread ? thread.status : "no thread"}`
+                : view === "pair"
+                  ? `Project ${c.projectId}`
+                  : (c.bridgeUrl ?? "Bridge URL unknown")}
             </Text>
           </View>
           <Text style={styles.chevron}>{view === "threads" ? "▴" : "▾"}</Text>
@@ -201,10 +212,26 @@ function MainView({ c }: { c: PanelController }) {
           <View style={[styles.row, { marginTop: space.xs, gap: space.sm, flexWrap: "wrap" }]}>
             <Text style={[type.caption, { color: colors.warning, flexShrink: 1 }]}>{speech.error ?? speech.support?.reason}</Text>
             {speech.support?.canDownloadModel ? <Button compact label={`Download ${speech.locale} model`} onPress={c.downloadSpeechModel} /> : null}
+            {speech.onlineAvailable ? (
+              <Button
+                compact
+                label="Use online recognition"
+                onPress={c.allowOnlineSpeech}
+                accessibilityHint="For this session, audio goes to the phone's speech service instead of staying on the device"
+              />
+            ) : null}
           </View>
         ) : (
           <Text style={[type.caption, { marginTop: space.xs }]}>
-            {listening ? `On-device · ${speech.locale}` : state.inputMethod === "typed" ? "Typed" : state.inputMethod === "voice" ? "Dictated on device" : "Dictated, edited"}
+            {listening
+              ? `${speech.onDevice ? "On-device" : "Online"} · ${speech.locale}`
+              : state.inputMethod === "typed"
+                ? "Typed"
+                : state.inputMethod === "voice"
+                  ? speech.onDevice
+                    ? "Dictated on device"
+                    : "Dictated (online recognition)"
+                  : "Dictated, edited"}
           </Text>
         )}
       </View>
@@ -428,11 +455,71 @@ function Detail({ k, v }: { k: string; v: string }) {
   );
 }
 
+type LinkCheck = { state: "idle" } | { state: "checking"; url: string } | { state: "done"; probe: BridgeProbe };
+
+/** Debounced GET /health against the URL being edited, so "not the bridge" shows before pairing. */
+function useLinkCheck(url: string, probe: PanelController["probeBridge"]) {
+  const [check, setCheck] = useState<LinkCheck>({ state: "idle" });
+  const [nonce, setNonce] = useState(0);
+  const latest = useRef(0);
+  useEffect(() => {
+    const target = url.trim().replace(/\/$/, "");
+    if (!/^https?:\/\/[^/\s]+/.test(target)) {
+      setCheck({ state: "idle" });
+      return;
+    }
+    const id = ++latest.current;
+    setCheck({ state: "checking", url: target });
+    const timer = setTimeout(() => {
+      probe(target).then(
+        (result) => {
+          if (id === latest.current) setCheck({ state: "done", probe: result });
+        },
+        (error: unknown) => {
+          if (id === latest.current)
+            setCheck({ state: "done", probe: { ok: false, url: target, kind: "unreachable", detail: (error as Error).message } });
+        },
+      );
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [url, probe, nonce]);
+  return { check, retest: () => setNonce((n) => n + 1) };
+}
+
+function LinkStatus({ check, onRetest }: { check: LinkCheck; onRetest(): void }) {
+  if (check.state === "idle") return null;
+  const failed = check.state === "done" && !check.probe.ok;
+  const tone = check.state === "checking" ? colors.textFaint : failed ? colors.danger : colors.success;
+  const text =
+    check.state === "checking"
+      ? `Checking ${check.url}…`
+      : check.probe.ok
+        ? `Reached expo-ai-bridge ${check.probe.version} at ${check.probe.url}`
+        : check.probe.detail;
+  return (
+    <View style={styles.linkStatus} accessibilityLiveRegion="polite">
+      <StatusDot color={tone} />
+      <Text style={[type.caption, { flex: 1, color: failed ? colors.danger : colors.textMuted }]} selectable>
+        {text}
+      </Text>
+      {check.state === "done" ? <Button compact label="Test again" onPress={onRetest} /> : null}
+    </View>
+  );
+}
+
 function PairView({ c }: { c: PanelController }) {
   const [url, setUrl] = useState(c.bridgeUrl ?? "http://");
+  const edited = useRef(false);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(c.connection.status === "unpaired" ? (c.connection.reason ?? null) : null);
+  const { check, retest } = useLinkCheck(url, c.probeBridge);
+
+  // Follow a newly discovered URL until the user types their own, so only one URL is ever shown.
+  useEffect(() => {
+    if (!edited.current && c.bridgeUrl) setUrl(c.bridgeUrl);
+  }, [c.bridgeUrl]);
+
   const onPair = async () => {
     setBusy(true);
     setError(null);
@@ -440,16 +527,31 @@ function PairView({ c }: { c: PanelController }) {
       await c.pair(url.trim(), code.trim());
     } catch (pairError) {
       setError((pairError as Error).message);
+      retest();
     } finally {
       setBusy(false);
     }
   };
   return (
-    <View style={[styles.body, { gap: space.md }]}>
-      <Text style={type.body}>Pair with the bridge running on your computer. The 6-digit code is printed in the bridge terminal.</Text>
+    <ScrollView style={styles.body} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.md }}>
+      <Text style={type.body}>Pair with the bridge running on your computer.</Text>
       <View>
         <Text style={type.label}>Bridge URL</Text>
-        <TextInput value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" style={styles.field} placeholderTextColor={colors.textFaint} accessibilityLabel="Bridge URL" />
+        <TextInput
+          value={url}
+          onChangeText={(text) => {
+            edited.current = true;
+            setUrl(text);
+          }}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          style={styles.field}
+          placeholder="http://127.0.0.1:8790"
+          placeholderTextColor={colors.textFaint}
+          accessibilityLabel="Bridge URL"
+        />
+        <LinkStatus check={check} onRetest={retest} />
       </View>
       <View>
         <Text style={type.label}>Pairing code</Text>
@@ -463,10 +565,18 @@ function PairView({ c }: { c: PanelController }) {
           maxLength={6}
           accessibilityLabel="Pairing code"
         />
+        <Text style={[type.caption, { marginTop: space.xs }]}>
+          Printed in the bridge terminal. Expired? Press p there, or run{" "}
+          <Text style={styles.inlineCode}>expo-ai-bridge pair-code</Text>.
+        </Text>
       </View>
-      {error ? <Text style={[type.caption, { color: colors.danger }]}>{error}</Text> : null}
+      {error ? (
+        <Text style={[type.caption, { color: colors.danger }]} selectable>
+          {error}
+        </Text>
+      ) : null}
       <Button variant="primary" label={busy ? "Pairing…" : "Pair"} disabled={busy || code.length !== 6} onPress={onPair} />
-    </View>
+    </ScrollView>
   );
 }
 
@@ -527,4 +637,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   codeField: { fontFamily: mono, fontSize: 22, letterSpacing: 8, textAlign: "center" },
+  linkStatus: { flexDirection: "row", alignItems: "center", gap: space.sm, marginTop: space.sm },
+  inlineCode: { fontFamily: mono, color: colors.text },
 });

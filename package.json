@@ -15,7 +15,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "bridge": "pnpm --filter expo-ai-bridge run start"
+    "bridge": "pnpm --filter @dave-morgan/expo-ai-bridge run start",
+    "pack:all": "pnpm -r --filter \"./packages/**\" pack --pack-destination dist-packs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

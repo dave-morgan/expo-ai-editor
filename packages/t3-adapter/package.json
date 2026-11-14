@@ -1,5 +1,5 @@
 {
-  "name": "@expo-ai/t3-adapter",
+  "name": "@dave-morgan/expo-ai-t3-adapter",
   "version": "0.1.0",
   "description": "T3 Code CLI adapter for Expo AI Inspector bridges.",
   "license": "MIT",
@@ -15,7 +15,9 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "!**/*.test.*",
+    "!**/__tests__/**"
   ],
   "sideEffects": false,
   "scripts": {
@@ -24,7 +26,19 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@expo-ai/protocol": "workspace:*",
+    "@dave-morgan/expo-ai-protocol": "workspace:*",
     "zod": "^4.6.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dave-morgan/expo-ai-editor.git",
+    "directory": "packages/t3-adapter"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
   }
 }

@@ -28,14 +28,14 @@ flowchart LR
   Src -. "file watch" .-> Bridge
 ```
 
-| Package | What it is |
-| --- | --- |
-| [`expo-ai-inspector`](packages/expo-ai-inspector) | React Native overlay + Expo config plugin + Babel entry |
-| [`@expo-ai/inspector-transform`](packages/inspector-transform) | Dev-only Babel plugin tagging JSX with source locations |
-| [`expo-ai-bridge`](packages/expo-ai-bridge) | Node server/CLI: pairing, queueing, prompt building, T3 delivery, status |
-| [`@expo-ai/t3-adapter`](packages/t3-adapter) | `AgentAdapter` interface + T3 CLI implementation |
-| [`@expo-ai/protocol`](packages/protocol) | Versioned zod schemas shared by phone and bridge |
-| [`apps/example-expo`](apps/example-expo) | Example app: profile, settings form, cards, design system |
+| Package                                                                    | What it is                                                               |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [`@dave-morgan/expo-ai-inspector`](packages/expo-ai-inspector)             | React Native overlay + Expo config plugin + Babel entry                  |
+| [`@dave-morgan/expo-ai-inspector-transform`](packages/inspector-transform) | Dev-only Babel plugin tagging JSX with source locations                  |
+| [`@dave-morgan/expo-ai-bridge`](packages/expo-ai-bridge)                                | Node server/CLI: pairing, queueing, prompt building, T3 delivery, status |
+| [`@dave-morgan/expo-ai-t3-adapter`](packages/t3-adapter)                   | `AgentAdapter` interface + T3 CLI implementation                         |
+| [`@dave-morgan/expo-ai-protocol`](packages/protocol)                       | Versioned zod schemas shared by phone and bridge                         |
+| [`apps/example-expo`](apps/example-expo)                                   | Example app: profile, settings form, cards, design system                |
 
 ## Quick start
 
@@ -44,25 +44,25 @@ T3 Code 0.1.9+ desktop app. Details in [docs/setup.md](docs/setup.md).
 
 ```sh
 # in your Expo app
-npx expo install expo-ai-inspector expo-speech-recognition react-native-view-shot expo-secure-store expo-dev-client
+npx expo install @dave-morgan/expo-ai-inspector expo-speech-recognition react-native-view-shot expo-secure-store expo-dev-client
 ```
 
 ```js
 // babel.config.js
 module.exports = (api) => {
   api.cache(true);
-  return { presets: ["babel-preset-expo"], plugins: ["expo-ai-inspector/babel"] };
+  return { presets: ["babel-preset-expo"], plugins: ["@dave-morgan/expo-ai-inspector/babel"] };
 };
 ```
 
 ```json
 // app.json
-{ "expo": { "plugins": ["expo-ai-inspector"] } }
+{ "expo": { "plugins": ["@dave-morgan/expo-ai-inspector"] } }
 ```
 
 ```tsx
 // app/_layout.tsx
-import { AIInspector } from "expo-ai-inspector";
+import { AIInspector } from "@dave-morgan/expo-ai-inspector";
 
 export default function RootLayout() {
   return (
@@ -76,6 +76,7 @@ export default function RootLayout() {
 
 ```sh
 npx expo run:ios            # or run:android: rebuild the dev client once
+npm install --save-dev @dave-morgan/expo-ai-bridge
 npx expo-ai-bridge doctor   # T3 CLI found? server reachable? threads?
 npx expo-ai-bridge start    # prints a 6-digit pairing code (use --lan for phones on Wi-Fi)
 ```
@@ -104,6 +105,8 @@ Running the example on Android/iOS: [docs/setup.md#running-the-example-app](docs
 
 - [Architecture](docs/architecture.md), including how to add another coding-agent adapter
 - [Setup and troubleshooting](docs/setup.md)
+- [Add to an existing app](docs/existing-app.md): install, peer dependencies, Babel, Metro, mount point
+- [Physical Android over USB](docs/physical-android.md): `adb reverse`, Metro ports, proxies, dictation models
 - [T3 Code integration](docs/t3-integration.md): verified CLI contract, run tracking, queue/steer
 - [Component inspection and source mapping](docs/component-inspection.md), including private APIs used
 - [Security](docs/security.md)

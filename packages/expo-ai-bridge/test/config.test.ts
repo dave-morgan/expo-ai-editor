@@ -95,3 +95,33 @@ describe("bridge config", () => {
     expect(config.pairing.sessionsFile).toBe(resolve(cwd, "state/sessions.json"));
   });
 });
+
+describe("git worktree resolution", () => {
+  it("maps configured and explicit paths, preserving the worktree path", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "bridge-worktree-"));
+    await writeFile(
+      join(cwd, "expo-ai-bridge.config.json"),
+      JSON.stringify({ projects: [{ id: "app", root: ".", t3Project: "./linked/sub" }] }),
+    );
+    const resolveGit = async (path: string) =>
+      path.replace(`${join(cwd, "linked")}`, join(cwd, "main"));
+    for (const flags of [{}, { t3Project: "./linked/sub" }]) {
+      const config = await loadConfig({ cwd, flags, resolveGit });
+      expect(config.projects[0]).toMatchObject({
+        t3Project: join(cwd, "main/sub"),
+        t3ProjectWorktree: join(cwd, "linked/sub"),
+      });
+    }
+  });
+  it("leaves opaque project ids untouched", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "bridge-worktree-"));
+    const config = await loadConfig({
+      cwd,
+      flags: { projectId: "app", projectRoot: ".", t3Project: "opaque-id" },
+      resolveGit: async () => {
+        throw new Error("must not run");
+      },
+    });
+    expect(config.projects[0]?.t3Project).toBe("opaque-id");
+  });
+});

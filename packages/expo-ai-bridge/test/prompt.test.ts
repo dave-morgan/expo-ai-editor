@@ -1,4 +1,4 @@
-import { FeedbackSchema } from "@expo-ai/protocol";
+import { FeedbackSchema } from "@dave-morgan/expo-ai-protocol";
 import { describe, expect, it } from "vitest";
 import { buildAgentPrompt } from "../src/prompt.js";
 

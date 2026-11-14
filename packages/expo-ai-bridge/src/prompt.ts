@@ -1,4 +1,4 @@
-import type { DeviceInfo, Feedback, SourceLocation } from "@expo-ai/protocol";
+import type { DeviceInfo, Feedback, SourceLocation } from "@dave-morgan/expo-ai-protocol";
 import type { BridgeProject } from "./config.js";
 
 interface PromptInput {

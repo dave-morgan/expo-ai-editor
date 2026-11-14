@@ -1,5 +1,5 @@
 {
-  "name": "@expo-ai/protocol",
+  "name": "@dave-morgan/expo-ai-protocol",
   "version": "0.1.0",
   "description": "Versioned, runtime-validated wire protocol shared by expo-ai-inspector and expo-ai-bridge.",
   "license": "MIT",
@@ -13,7 +13,12 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src",
+    "!**/*.test.*",
+    "!**/__tests__/**"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -22,5 +27,17 @@
   },
   "dependencies": {
     "zod": "^4.6.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dave-morgan/expo-ai-editor.git",
+    "directory": "packages/protocol"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
   }
 }

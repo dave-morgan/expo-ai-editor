@@ -1,4 +1,4 @@
-import type { Screenshot } from "@expo-ai/protocol";
+import type { Screenshot } from "@dave-morgan/expo-ai-protocol";
 import { optional } from "./optional";
 
 export function screenshotsSupported(): boolean {

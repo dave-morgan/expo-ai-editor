@@ -1,5 +1,5 @@
-import { RequestIdSchema } from "@expo-ai/protocol";
-import type { Screenshot } from "@expo-ai/protocol";
+import { RequestIdSchema } from "@dave-morgan/expo-ai-protocol";
+import type { Screenshot } from "@dave-morgan/expo-ai-protocol";
 import { constants } from "node:fs";
 import { mkdir, open, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -35,10 +35,12 @@ function requireInside(root: string, candidate: string) {
 async function ensureInsideDirectory(root: string, directory: string) {
   requireInside(root, directory);
   let current = root;
+  let firstCreated: string | undefined;
   for (const part of relative(root, directory).split(sep).filter(Boolean)) {
     current = resolve(current, part);
     try {
       await mkdir(current);
+      firstCreated ??= current;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
     }
@@ -46,7 +48,7 @@ async function ensureInsideDirectory(root: string, directory: string) {
     requireInside(root, actual);
     current = actual;
   }
-  return current;
+  return { directory: current, firstCreated };
 }
 
 export async function saveScreenshot({
@@ -64,32 +66,29 @@ export async function saveScreenshot({
   RequestIdSchema.parse(requestId);
   const bytes = validateScreenshot(screenshot, config.maxBytes);
   const root = await realpath(projectRoot);
-  const directory = await ensureInsideDirectory(root, resolve(root, config.dir));
-  const ignoreDirectory = await ensureInsideDirectory(root, resolve(root, ".expo-ai"));
-  const ignorePath = resolve(ignoreDirectory, ".gitignore");
-  // O_EXCL rejects existing symbolic links, and O_NOFOLLOW protects supported OSes.
-  try {
-    const ignore = await open(
-      ignorePath,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-      0o600,
-    );
+  const { directory, firstCreated } = await ensureInsideDirectory(root, resolve(root, config.dir));
+  const relativeDir = relative(root, directory);
+  const ignoreDirectory =
+    relativeDir.split(sep)[0] === ".expo-ai"
+      ? (await ensureInsideDirectory(root, resolve(root, ".expo-ai"))).directory
+      : firstCreated;
+  if (ignoreDirectory) {
+    const ignorePath = resolve(ignoreDirectory, ".gitignore");
+    // O_EXCL rejects existing symbolic links, and O_NOFOLLOW protects supported OSes.
     try {
-      await ignore.writeFile("*\n");
-    } finally {
-      await ignore.close();
-    }
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-    requireInside(root, await realpath(ignorePath));
-    const ignore = await open(ignorePath, constants.O_RDWR | constants.O_NOFOLLOW);
-    try {
-      if (!(await ignore.stat()).isFile()) throw new Error("Screenshot ignore path must be a file");
-      const content = await ignore.readFile("utf8");
-      if (!content.split(/\r?\n/).some((line) => line.trim() === "*"))
-        await ignore.writeFile(`${content.endsWith("\n") || !content ? "" : "\n"}*\n`);
-    } finally {
-      await ignore.close();
+      const ignore = await open(
+        ignorePath,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+        0o600,
+      );
+      try {
+        await ignore.writeFile("*\n");
+      } finally {
+        await ignore.close();
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      requireInside(root, await realpath(ignorePath));
     }
   }
   const filename = `${requestId}.${screenshot.mimeType === "image/jpeg" ? "jpg" : "png"}`;

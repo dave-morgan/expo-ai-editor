@@ -1,4 +1,4 @@
-import type { Bounds } from "@expo-ai/protocol";
+import type { Bounds } from "@dave-morgan/expo-ai-protocol";
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { colors, mono, radius } from "./theme";

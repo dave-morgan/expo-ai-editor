@@ -1,4 +1,5 @@
-import { SafeIdSchema } from "@expo-ai/protocol";
+import { resolveWorktree } from "./worktree.js";
+import { SafeIdSchema } from "@dave-morgan/expo-ai-protocol";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -11,6 +12,7 @@ const projectSchema = z
     name: z.string().min(1).optional(),
     root: z.string().min(1),
     t3Project: z.string().min(1),
+    t3ProjectWorktree: z.string().optional(),
     defaultThreadId: SafeIdSchema.optional(),
     allowedThreadIds: z.array(SafeIdSchema).optional(),
   })
@@ -43,6 +45,7 @@ export const BridgeConfigSchema = z.object({
     .default({ args: [], pollIntervalMs: 2000, timeoutMs: 30_000 }),
   pairing: z
     .object({
+      controlDir: z.string().min(1).optional(),
       codeTtlSeconds: z.number().positive().default(600),
       tokenTtlHours: z.number().positive().default(12),
       sessionsFile: z
@@ -83,7 +86,9 @@ export function parseCliArgs(args: string[]) {
       lan: { type: "boolean" },
     },
   });
-  const command = z.enum(["start", "doctor", "threads"]).parse(positionals[0] ?? "start");
+  const command = z
+    .enum(["start", "doctor", "threads", "pair-code"])
+    .parse(positionals[0] ?? "start");
   if (positionals.length > 1) throw new Error("Unexpected command arguments");
   const port = values.port === undefined ? undefined : Number(values.port);
   if (
@@ -124,7 +129,13 @@ export async function loadConfig({
   cwd = process.cwd(),
   configPath,
   flags = {},
-}: { cwd?: string; configPath?: string; flags?: BridgeFlags } = {}): Promise<BridgeConfig> {
+  resolveGit = resolveWorktree,
+}: {
+  cwd?: string;
+  configPath?: string;
+  flags?: BridgeFlags;
+  resolveGit?: (path: string) => Promise<string>;
+} = {}): Promise<BridgeConfig> {
   const path = resolve(cwd, configPath ?? "expo-ai-bridge.config.json");
   let raw: unknown;
   let base = dirname(path);
@@ -169,8 +180,16 @@ export async function loadConfig({
   }
   for (const project of config.projects) {
     project.root = resolve(base, project.root);
-    if (isPathReference(project.t3Project)) project.t3Project = resolve(base, project.t3Project);
+    if (isPathReference(project.t3Project)) {
+      const original = resolve(base, project.t3Project);
+      project.t3Project = await resolveGit(original);
+      if (original !== project.t3Project) project.t3ProjectWorktree = original;
+    }
   }
+  config.pairing.controlDir = resolve(
+    base,
+    config.pairing.controlDir ?? resolve(homedir(), ".expo-ai-bridge"),
+  );
   config.pairing.sessionsFile = resolve(base, config.pairing.sessionsFile);
   if (config.t3.command && isPathReference(config.t3.command))
     config.t3.command = resolve(base, config.t3.command);

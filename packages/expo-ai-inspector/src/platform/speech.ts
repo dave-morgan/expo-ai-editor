@@ -8,7 +8,8 @@ import { optional, type SpeechModule } from "./optional";
  * and only the transcript is returned. With `requireOnDevice` (default) the recognizer is started
  * with `requiresOnDeviceRecognition: true`; if the device cannot do that for the requested locale
  * we report it and the UI offers typed input instead. We never silently fall back to network
- * recognition.
+ * recognition: when on-device recognition is the only obstacle, the UI offers an explicit,
+ * per-session "use online recognition" choice (`allowOnline`), which the user must tap.
  */
 
 export type SpeechStatus = "unavailable" | "idle" | "starting" | "listening" | "stopping";
@@ -25,7 +26,12 @@ export interface SpeechSupport {
   reason?: string;
   /** Android 13+: the offline model for the locale can be downloaded. */
   canDownloadModel?: boolean;
+  /** Only the on-device requirement blocks dictation; the OS recognizer could work online. */
+  onlineAvailable?: boolean;
 }
+
+/** Appended to every dictation failure so it is clear the instruction can still be typed. */
+export const TYPING_HINT = "Typing still works.";
 
 const normalizeLocale = (locale: string) => locale.toLowerCase().replace(/_/g, "-");
 
@@ -46,6 +52,7 @@ export async function checkSpeechSupport(
     return {
       ok: false,
       reason: "On-device speech recognition is not supported here. Type your instruction instead (audio is never uploaded).",
+      onlineAvailable: true,
     };
   }
   try {
@@ -60,8 +67,9 @@ export async function checkSpeechSupport(
     if (options.requireOnDevice && options.platform === "android" && installed.length > 0 && !installed.includes(wanted)) {
       return {
         ok: false,
-        reason: `The on-device model for ${options.locale} is not installed.`,
+        reason: `The on-device model for ${options.locale} is not installed. ${TYPING_HINT}`,
         canDownloadModel: true,
+        onlineAvailable: true,
       };
     }
   } catch {
@@ -86,6 +94,34 @@ export function describeSpeechError(code: string, message?: string): string {
   return ERROR_MESSAGES[code] ?? message ?? `Speech recognition error (${code}).`;
 }
 
+/**
+ * Explains a failed offline-model download. Android's recognizer reports failures as bare numbers
+ * (e.g. "Failed to download offline model download with error: 5"), which is meaningless to a user.
+ */
+export function describeModelDownloadFailure(locale: string, raw?: string): string {
+  const code = raw?.match(/error:?\s*(\d+)/i)?.[1];
+  return (
+    `The ${locale} on-device model could not be downloaded${code ? ` (Android error ${code})` : ""}. ` +
+    `Install it from Settings › System › Languages › On-device speech recognition, ` +
+    `or use online recognition for this session. ${TYPING_HINT}`
+  );
+}
+
+const describeModelDownloadResult = (locale: string, result: { status: string; message?: string }): string => {
+  switch (result.status) {
+    case "download_success":
+      return `The ${locale} model is installed. Tap the mic to dictate.`;
+    case "opened_dialog":
+      return `Follow the system dialog to download the ${locale} model, then tap the mic.`;
+    case "download_scheduled":
+      return `The ${locale} model download is queued (it may wait for Wi-Fi). ${TYPING_HINT}`;
+    default:
+      return /error|fail/i.test(result.message ?? "")
+        ? describeModelDownloadFailure(locale, result.message)
+        : result.message || `Model download: ${result.status}`;
+  }
+};
+
 const Speech = optional.speech();
 const noopEvent = (_event: string, _listener: (...args: never[]) => void) => {};
 const useSpeechEvent = (Speech?.useSpeechRecognitionEvent ?? noopEvent) as (
@@ -98,6 +134,10 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [support, setSupport] = useState<SpeechSupport | null>(Speech ? null : { ok: false, reason: "expo-speech-recognition is not installed." });
+  /** Per-session, user-chosen opt-in to network recognition. Never set automatically. */
+  const [online, setOnline] = useState(false);
+  const [modelDownloadFailed, setModelDownloadFailed] = useState(false);
+  const requireOnDevice = options.requireOnDevice && !online;
   const onFinalRef = useRef(options.onFinal);
   onFinalRef.current = options.onFinal;
   const cancelled = useRef(false);
@@ -106,7 +146,7 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
     let alive = true;
     void checkSpeechSupport(Speech?.ExpoSpeechRecognitionModule ?? null, {
       locale: options.locale,
-      requireOnDevice: options.requireOnDevice,
+      requireOnDevice,
       platform,
     }).then((result) => {
       if (alive) setSupport(result);
@@ -114,7 +154,7 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
     return () => {
       alive = false;
     };
-  }, [options.locale, options.requireOnDevice, platform]);
+  }, [options.locale, requireOnDevice, platform]);
 
   useSpeechEvent("start", () => setStatus("listening"));
   useSpeechEvent("end", () => {
@@ -133,7 +173,12 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
   });
   useSpeechEvent("error", (event: { error: string; message: string }) => {
     if (event.error === "aborted") return;
-    setError(describeSpeechError(event.error, event.message));
+    if (/offline model/i.test(event.message ?? "")) {
+      setModelDownloadFailed(true);
+      setError(describeModelDownloadFailure(options.locale, event.message));
+    } else {
+      setError(describeSpeechError(event.error, event.message));
+    }
     setStatus("idle");
   });
 
@@ -159,13 +204,13 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
         continuous: false,
         maxAlternatives: 1,
         addsPunctuation: true,
-        requiresOnDeviceRecognition: options.requireOnDevice,
+        requiresOnDeviceRecognition: requireOnDevice,
       });
     } catch (startError) {
       setStatus("idle");
-      setError((startError as Error).message);
+      setError(`${(startError as Error).message} ${TYPING_HINT}`);
     }
-  }, [options.locale, options.requireOnDevice, support]);
+  }, [options.locale, requireOnDevice, support]);
 
   const stop = useCallback(() => {
     if (!Speech) return;
@@ -184,11 +229,42 @@ export function useSpeechInput(options: SpeechOptions, platform: string) {
     if (!Speech) return;
     try {
       const result = await Speech.ExpoSpeechRecognitionModule.androidTriggerOfflineModelDownload({ locale: options.locale });
-      setError(result.message || `Model download: ${result.status}`);
+      if (result.status === "download_success") {
+        setModelDownloadFailed(false);
+        // Re-check so the mic unblocks without restarting the app.
+        setSupport(
+          await checkSpeechSupport(Speech.ExpoSpeechRecognitionModule, { locale: options.locale, requireOnDevice, platform }),
+        );
+      }
+      setError(describeModelDownloadResult(options.locale, result));
     } catch (downloadError) {
-      setError((downloadError as Error).message);
+      setModelDownloadFailed(true);
+      setError(describeModelDownloadFailure(options.locale, (downloadError as Error).message));
     }
-  }, [options.locale]);
+  }, [options.locale, requireOnDevice, platform]);
 
-  return { status, partial, error, support, start, stop, cancel, downloadModel, clearError: () => setError(null) };
+  const allowOnline = useCallback(() => {
+    setOnline(true);
+    setModelDownloadFailed(false);
+    setError(null);
+  }, []);
+
+  /** Offer the explicit online opt-in only when the on-device requirement is what blocks dictation. */
+  const onlineAvailable =
+    !!Speech && requireOnDevice && (modelDownloadFailed || (support !== null && !support.ok && !!support.onlineAvailable));
+
+  return {
+    status,
+    partial,
+    error,
+    support,
+    onDevice: requireOnDevice,
+    onlineAvailable,
+    start,
+    stop,
+    cancel,
+    downloadModel,
+    allowOnline,
+    clearError: () => setError(null),
+  };
 }

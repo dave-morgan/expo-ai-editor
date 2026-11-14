@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Screenshot } from "@expo-ai/protocol";
+import type { Screenshot } from "@dave-morgan/expo-ai-protocol";
 import { describe, expect, it } from "vitest";
 import { saveScreenshot, validateScreenshot } from "../src/screenshot.js";
 
@@ -89,14 +89,14 @@ describe("screenshot safety", () => {
       saveScreenshot({ projectRoot: root, requestId: "request_123", screenshot: jpeg, config }),
     ).rejects.toThrow();
   });
-  it("adds the wildcard to an existing ignore file without losing its contents", async () => {
+  it("preserves an existing ignore file without changes", async () => {
     const root = await mkdtemp(join(tmpdir(), "bridge-shot-"));
     await mkdir(join(root, ".expo-ai"));
     await writeFile(join(root, ".expo-ai/.gitignore"), "# Existing rule\n*.tmp");
     await saveScreenshot({ projectRoot: root, requestId: "request_123", screenshot: jpeg, config });
     const ignore = await readFile(join(root, ".expo-ai/.gitignore"), "utf8");
     expect(ignore).toContain("# Existing rule\n*.tmp");
-    expect(ignore.split(/\r?\n/)).toContain("*");
+    expect(ignore).toBe("# Existing rule\n*.tmp");
   });
   it("rejects an ignore-file symlink escaping the root", async () => {
     const root = await mkdtemp(join(tmpdir(), "bridge-shot-"));
@@ -106,5 +106,20 @@ describe("screenshot safety", () => {
     await expect(
       saveScreenshot({ projectRoot: root, requestId: "request_123", screenshot: jpeg, config }),
     ).rejects.toThrow(/inside|outside|contain/i);
+  });
+});
+
+it("ignores the topmost directory created for a custom screenshot path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bridge-shot-custom-"));
+  await mkdir(join(root, "existing"));
+  await saveScreenshot({
+    projectRoot: root,
+    requestId: "custom-shot",
+    screenshot: jpeg,
+    config: { ...config, dir: "existing/generated/shots" },
+  });
+  expect(await readFile(join(root, "existing/generated/.gitignore"), "utf8")).toBe("*\n");
+  await expect(readFile(join(root, "existing/.gitignore"))).rejects.toMatchObject({
+    code: "ENOENT",
   });
 });

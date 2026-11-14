@@ -1,5 +1,5 @@
-import type { Bounds, ComponentFrame, Confidence, Selection, SourceLocation, SourceOrigin } from "@expo-ai/protocol";
-import { LIMITS } from "@expo-ai/protocol";
+import type { Bounds, ComponentFrame, Confidence, Selection, SourceLocation, SourceOrigin } from "@dave-morgan/expo-ai-protocol";
+import { LIMITS } from "@dave-morgan/expo-ai-protocol";
 import {
   collectText,
   getFiberName,
@@ -12,7 +12,7 @@ import {
 
 export const SOURCE_PROP = "__aiSource";
 
-/** Parses `path/to/File.tsx:12:4` produced by @expo-ai/inspector-transform. */
+/** Parses `path/to/File.tsx:12:4` produced by @dave-morgan/expo-ai-inspector-transform. */
 export function parseSourceProp(value: unknown): SourceLocation | null {
   if (typeof value !== "string") return null;
   const match = /^(.+):(\d+):(\d+)$/.exec(value);

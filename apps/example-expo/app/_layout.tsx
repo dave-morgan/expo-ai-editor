@@ -1,6 +1,6 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { AIInspector } from "expo-ai-inspector";
+import { AIInspector } from "@dave-morgan/expo-ai-inspector";
 import { palette } from "../src/ui/theme";
 
 export default function RootLayout() {

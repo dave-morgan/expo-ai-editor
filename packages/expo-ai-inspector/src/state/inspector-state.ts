@@ -1,4 +1,4 @@
-import type { DeliveryMode, RequestPhase, Selection, ServerMessage } from "@expo-ai/protocol";
+import type { DeliveryMode, RequestPhase, Selection, ServerMessage } from "@dave-morgan/expo-ai-protocol";
 
 export type InspectorMode = "closed" | "selecting" | "panel";
 

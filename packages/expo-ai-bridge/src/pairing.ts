@@ -1,4 +1,4 @@
-import type { PairRequest, PairResponse } from "@expo-ai/protocol";
+import type { PairRequest, PairResponse } from "@dave-morgan/expo-ai-protocol";
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -18,6 +18,7 @@ interface PairingOptions {
   projectIds: string[];
   now?: () => number;
   onCodeInvalidated?: () => void;
+  onCodeRotated?: (pairing: { code: string; expiresAt: Date }) => void;
 }
 export class PairingError extends Error {
   constructor(
@@ -34,6 +35,8 @@ export class PairingManager {
   private readonly sessions = new Map<string, PairingSession>();
   private readonly attempts = new Map<string, number[]>();
   private readonly now: () => number;
+  private rotationTimer: ReturnType<typeof setTimeout> | undefined;
+  private rotating = false;
   private code = "";
   private expiresAt = 0;
   private failures = 0;
@@ -67,7 +70,32 @@ export class PairingManager {
     this.code = randomInt(0, 1_000_000).toString().padStart(6, "0");
     this.expiresAt = this.now() + this.options.config.codeTtlSeconds * 1000;
     this.failures = 0;
+    if (this.rotating) {
+      this.scheduleRotation();
+      this.options.onCodeRotated?.(this.getPairingCode());
+    }
     return this.getPairingCode();
+  }
+
+  startAutoRotation() {
+    this.rotating = true;
+    this.scheduleRotation();
+  }
+  stopAutoRotation() {
+    this.rotating = false;
+    clearTimeout(this.rotationTimer);
+    this.rotationTimer = undefined;
+  }
+  private scheduleRotation() {
+    clearTimeout(this.rotationTimer);
+    this.rotationTimer = setTimeout(
+      () => {
+        if (this.now() >= this.expiresAt) this.regeneratePairingCode();
+        else this.scheduleRotation();
+      },
+      Math.min(2_147_483_647, Math.max(1, this.expiresAt - this.now())),
+    );
+    this.rotationTimer.unref?.();
   }
 
   async pair(request: PairRequest, ip: string): Promise<PairResponse> {

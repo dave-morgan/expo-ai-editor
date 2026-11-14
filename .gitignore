@@ -21,3 +21,4 @@ android/
 *.p8
 *.p12
 *.mobileprovision
+dist-packs/

@@ -1,11 +1,11 @@
-# @expo-ai/t3-adapter
+# @dave-morgan/expo-ai-t3-adapter
 
 An agent adapter backed only by the public T3 Code CLI. It lists existing threads,
 queues messages through stdin, and monitors run ordinals without interrupting an
 active run. T3 Code desktop or `t3 serve` must be running.
 
 ```ts
-import { T3CliAdapter } from "@expo-ai/t3-adapter";
+import { T3CliAdapter } from "@dave-morgan/expo-ai-t3-adapter";
 
 const adapter = new T3CliAdapter();
 const report = await adapter.diagnose();
@@ -44,7 +44,7 @@ types, the pure `classifyRun` function, CLI resolver and runner factory, and typ
 and `AdapterProtocolError`. Check the error's `code` when crossing process
 boundaries.
 
-Run `npx -y pnpm@10.34.9 --filter @expo-ai/t3-adapter build`, `typecheck`, or
+Run `npx -y pnpm@10.34.9 --filter @dave-morgan/expo-ai-t3-adapter build`, `typecheck`, or
 `test` from the workspace root (use `npx.cmd` in restricted PowerShell).
 
 The integration fixture is `test/fixtures/fake-t3.mjs`, launched with Node and

@@ -1,5 +1,5 @@
 {
-  "name": "expo-ai-bridge",
+  "name": "@dave-morgan/expo-ai-bridge",
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,9 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "!**/*.test.*",
+    "!**/__tests__/**"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -25,12 +27,24 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
-    "@expo-ai/protocol": "workspace:*",
-    "@expo-ai/t3-adapter": "workspace:*",
+    "@dave-morgan/expo-ai-protocol": "workspace:*",
+    "@dave-morgan/expo-ai-t3-adapter": "workspace:*",
     "ws": "^8.18.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dave-morgan/expo-ai-editor.git",
+    "directory": "packages/expo-ai-bridge"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
   }
 }

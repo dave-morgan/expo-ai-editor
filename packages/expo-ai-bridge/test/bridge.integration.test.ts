@@ -11,14 +11,15 @@ import {
   LIMITS,
   PairResponseSchema,
   PROTOCOL_VERSION,
-} from "@expo-ai/protocol";
-import type { ClientMessageInput, Feedback, ServerMessage } from "@expo-ai/protocol";
-import { T3CliAdapter } from "@expo-ai/t3-adapter";
+} from "@dave-morgan/expo-ai-protocol";
+import type { ClientMessageInput, Feedback, ServerMessage } from "@dave-morgan/expo-ai-protocol";
+import { T3CliAdapter } from "@dave-morgan/expo-ai-t3-adapter";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { z } from "zod";
 
 import type { BridgeConfig } from "../src/config.js";
+import { main } from "../src/cli.js";
 import { createBridge } from "../src/index.js";
 
 const fixture = fileURLToPath(
@@ -224,6 +225,7 @@ describe("bridge with the real T3 CLI adapter", { timeout: 20000 }, () => {
         codeTtlSeconds: 600,
         tokenTtlHours: 12,
         sessionsFile: join(directory, "sessions.json"),
+        controlDir: join(directory, "control"),
       },
     };
     const adapter = new T3CliAdapter({
@@ -241,6 +243,51 @@ describe("bridge with the real T3 CLI adapter", { timeout: 20000 }, () => {
     await Promise.all(clients.map((client) => client.close()));
     await bridge?.stop();
     await rm(directory, { recursive: true, force: true });
+  });
+
+  it("issues fresh control codes only with the local control secret and removes its control file", async () => {
+    const port = new URL(httpUrl).port;
+    const path = join(directory, "control", `control-${port}.json`);
+    const control = z
+      .object({ pid: z.number(), port: z.number(), host: z.string(), secret: z.string() })
+      .parse(JSON.parse(await readFile(path, "utf8")));
+    expect(control).toMatchObject({ pid: process.pid, port: Number(port), host: "127.0.0.1" });
+    expect(control.secret).toMatch(/^[\w-]{43}$/);
+    for (const headers of [{}, { "x-expo-ai-control": "wrong" }]) {
+      const response = await fetch(`${httpUrl}/control/pairing-code`, { method: "POST", headers });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+    }
+    const response = await fetch(`${httpUrl}/control/pairing-code`, {
+      method: "POST",
+      headers: { "x-expo-ai-control": control.secret },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      code: bridge.getPairingCode().code,
+      expiresAt: bridge.getPairingCode().expiresAt.toISOString(),
+    });
+    expect((await pair()).status).toBe(200);
+    await bridge.stop();
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("pair-code asks a running bridge for a fresh code and reports a stopped bridge", async () => {
+    const configPath = join(directory, "bridge.json");
+    const port = new URL(httpUrl).port;
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        projects: [{ id: projectId, root, t3Project: projectId }],
+        pairing: { controlDir: join(directory, "control") },
+      }),
+    );
+    await main(["pair-code", "--config", configPath, "--port", port]);
+    expect((await pair()).status).toBe(200);
+    await bridge.stop();
+    await expect(main(["pair-code", "--config", configPath, "--port", port])).rejects.toThrow(
+      `Is expo-ai-bridge running on port ${port}?`,
+    );
   });
 
   it("serves health without secrets and pairs before hello, listing and selecting an existing thread", async () => {

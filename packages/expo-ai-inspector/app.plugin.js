@@ -7,7 +7,7 @@
  * - Adds an iOS local-network usage description (the inspector talks to the bridge on your LAN).
  *
  * The plugin only adds permission strings; the inspector itself renders nothing in production.
- * Usage in app.json: "plugins": [["expo-ai-inspector", { "microphonePermission": "..." }]]
+ * Usage in app.json: "plugins": [["@dave-morgan/expo-ai-inspector", { "microphonePermission": "..." }]]
  */
 const { withInfoPlist, withPlugins, createRunOncePlugin } = require("expo/config-plugins");
 

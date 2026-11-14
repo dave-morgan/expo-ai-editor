@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { discoverBridgeUrl, hostFromHostUri } from "../src/bridge/discovery";
 import { pickCandidate } from "../src/inspection/hit-test";
 import { isCompileErrorMessage, observeRefresh } from "../src/platform/refresh-observer";
-import { checkSpeechSupport, describeSpeechError } from "../src/platform/speech";
+import { checkSpeechSupport, describeModelDownloadFailure, describeSpeechError } from "../src/platform/speech";
 
 describe("pickCandidate", () => {
   const box = (index: number, x: number, y: number, w: number, h: number) => ({ index, depth: index, bounds: { x, y, width: w, height: h } });
@@ -50,7 +50,20 @@ describe("speech support", () => {
   });
   it("offers a model download when the locale is not installed (Android)", async () => {
     const result = await checkSpeechSupport(module({ installed: ["en-US"] }), opts);
-    expect(result).toMatchObject({ ok: false, canDownloadModel: true });
+    expect(result).toMatchObject({ ok: false, canDownloadModel: true, onlineAvailable: true });
+    expect(result.reason).toMatch(/Typing still works/);
+  });
+  it("marks on-device-only failures as eligible for the explicit online opt-in", async () => {
+    expect(await checkSpeechSupport(module({ onDevice: false }), opts)).toMatchObject({ ok: false, onlineAvailable: true });
+    expect((await checkSpeechSupport(module({ available: false }), opts)).onlineAvailable).toBeUndefined();
+    expect((await checkSpeechSupport(module({ locales: ["de-DE"], installed: [] }), opts)).onlineAvailable).toBeUndefined();
+  });
+  it("explains Android's numeric offline-model download errors", () => {
+    const text = describeModelDownloadFailure("en-AU", "Failed to download offline model download with error: 5");
+    expect(text).toMatch(/en-AU on-device model could not be downloaded \(Android error 5\)/);
+    expect(text).toMatch(/online recognition/);
+    expect(text).toMatch(/Typing still works/);
+    expect(describeModelDownloadFailure("en-AU")).not.toMatch(/Android error/);
   });
   it("rejects unsupported locales and missing modules", async () => {
     expect((await checkSpeechSupport(module({ locales: ["de-DE"], installed: [] }), opts)).ok).toBe(false);

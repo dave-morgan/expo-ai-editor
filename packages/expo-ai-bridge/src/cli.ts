@@ -3,14 +3,15 @@ import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { T3CliAdapter } from "@expo-ai/t3-adapter";
-import type { AgentAdapter } from "@expo-ai/t3-adapter";
+import { T3CliAdapter } from "@dave-morgan/expo-ai-t3-adapter";
+import type { AgentAdapter } from "@dave-morgan/expo-ai-t3-adapter";
 
 import { isLoopbackHost, loadConfig, parseCliArgs } from "./config.js";
 import type { BridgeConfig, BridgeProject } from "./config.js";
+import { requestPairingCode } from "./control.js";
 import { createBridge } from "./index.js";
 
-const usage = `Usage: expo-ai-bridge [start|doctor|threads] [options]
+const usage = `Usage: expo-ai-bridge [start|doctor|threads|pair-code] [options]
 
   --config <path>          Configuration file (default: expo-ai-bridge.config.json)
   --project-id <id>        Single project id, or project to list with threads
@@ -92,7 +93,6 @@ async function start(config: BridgeConfig, adapter: AgentAdapter): Promise<void>
         if (key === "q" || key === "\u0003") shutdown();
         else if (key === "p") {
           bridge.regeneratePairingCode();
-          printCode();
         } else if (key === "t") {
           void printThreads(adapter, config.projects).catch((error: unknown) => {
             console.error(error instanceof Error ? error.message : String(error));
@@ -118,6 +118,18 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<void
   }
   const parsed = parseCliArgs(args);
   const config = await loadConfig({ configPath: parsed.configPath, flags: parsed.flags });
+  if (parsed.command === "pair-code") {
+    const pairing = await requestPairingCode(config);
+    console.log(`Pairing code: ${pairing.code} (expires ${pairing.expiresAt})`);
+    return;
+  }
+  if (parsed.command === "start" || parsed.command === "doctor") {
+    for (const project of config.projects)
+      if (project.t3ProjectWorktree)
+        console.log(
+          `T3 project: ${project.t3ProjectWorktree} \u2192 ${project.t3Project} (git worktree)`,
+        );
+  }
   if (parsed.command !== "start" && !isLoopbackHost(config.host)) {
     console.warn(
       "Warning: bridge reachable from your network; pairing token required; never expose to the internet",

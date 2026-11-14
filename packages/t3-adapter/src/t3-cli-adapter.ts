@@ -1,5 +1,5 @@
-import type { AdapterCapabilities, DeliveryMode } from "@expo-ai/protocol";
-import { SafeIdSchema } from "@expo-ai/protocol";
+import type { AdapterCapabilities, DeliveryMode } from "@dave-morgan/expo-ai-protocol";
+import { SafeIdSchema } from "@dave-morgan/expo-ai-protocol";
 import { stripVTControlCharacters } from "node:util";
 
 import { z } from "zod";

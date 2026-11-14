@@ -1,5 +1,5 @@
 {
-  "name": "expo-ai-inspector",
+  "name": "@dave-morgan/expo-ai-inspector",
   "version": "0.1.0",
   "description": "Development-only overlay for Expo apps: select an element, speak a change, send it to your coding agent via expo-ai-bridge.",
   "license": "MIT",
@@ -14,9 +14,23 @@
     },
     "./babel": "./babel.js",
     "./app.plugin.js": "./app.plugin.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./metro": {
+      "types": "./metro.d.ts",
+      "default": "./metro.js"
+    }
   },
-  "files": ["build", "src", "babel.js", "app.plugin.js", "!src/**/__tests__"],
+  "files": [
+    "build",
+    "src",
+    "babel.js",
+    "app.plugin.js",
+    "!src/**/__tests__",
+    "!**/*.test.*",
+    "!**/__tests__/**",
+    "metro.js",
+    "metro.d.ts"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -24,8 +38,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@expo-ai/protocol": "workspace:*",
-    "@expo-ai/inspector-transform": "workspace:*"
+    "@dave-morgan/expo-ai-protocol": "workspace:*",
+    "@dave-morgan/expo-ai-inspector-transform": "workspace:*"
   },
   "peerDependencies": {
     "expo": ">=54",
@@ -38,11 +52,21 @@
     "expo-router": "*"
   },
   "peerDependenciesMeta": {
-    "expo-constants": { "optional": true },
-    "expo-speech-recognition": { "optional": true },
-    "react-native-view-shot": { "optional": true },
-    "expo-secure-store": { "optional": true },
-    "expo-router": { "optional": true }
+    "expo-constants": {
+      "optional": true
+    },
+    "expo-speech-recognition": {
+      "optional": true
+    },
+    "react-native-view-shot": {
+      "optional": true
+    },
+    "expo-secure-store": {
+      "optional": true
+    },
+    "expo-router": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/react": "~19.3.0",
@@ -56,5 +80,25 @@
     "react-native-view-shot": "6.1.1",
     "react-test-renderer": "19.3.0"
   },
-  "keywords": ["expo", "react-native", "inspector", "ai", "claude", "t3code", "devtools"]
+  "keywords": [
+    "expo",
+    "react-native",
+    "inspector",
+    "ai",
+    "claude",
+    "t3code",
+    "devtools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dave-morgan/expo-ai-editor.git",
+    "directory": "packages/expo-ai-inspector"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  }
 }

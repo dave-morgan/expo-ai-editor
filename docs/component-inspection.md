@@ -47,7 +47,7 @@ parts depend on private React / React Native internals.
 
 ## The Babel transform
 
-`expo-ai-inspector/babel` (`@expo-ai/inspector-transform`) appends one attribute to every JSX
+`@dave-morgan/expo-ai-inspector/babel` (`@dave-morgan/expo-ai-inspector-transform`) appends one attribute to every JSX
 element in app code:
 
 ```jsx
@@ -60,7 +60,7 @@ element in app code:
 - Skipped: `node_modules`, fragments, lowercase intrinsics (DOM tags on web), already tagged elements.
 - The attribute is added *after* spread props so a forwarded `{...props}` cannot overwrite it.
 - Disabled automatically when Metro's Babel caller reports `isDev: false` (release builds,
-  `expo export`), or with `["expo-ai-inspector/babel", { enabled: false }]`.
+  `expo export`), or with `["@dave-morgan/expo-ai-inspector/babel", { enabled: false }]`.
 - Host components ignore the unknown prop (Fabric only forwards props in the view config). Your own
   components receive an extra string prop; components that spread unknown props onto DOM nodes on
   web may show an attribute in the DOM in development.

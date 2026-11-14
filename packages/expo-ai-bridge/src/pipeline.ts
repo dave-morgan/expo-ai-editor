@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { relative } from "node:path";
-import type { DeviceInfo, Feedback, RequestPhase, ServerMessage } from "@expo-ai/protocol";
-import { AdapterUnavailableError } from "@expo-ai/t3-adapter";
-import type { AgentAdapter } from "@expo-ai/t3-adapter";
+import type { DeviceInfo, Feedback, RequestPhase, ServerMessage } from "@dave-morgan/expo-ai-protocol";
+import { AdapterUnavailableError } from "@dave-morgan/expo-ai-t3-adapter";
+import type { AgentAdapter } from "@dave-morgan/expo-ai-t3-adapter";
 import type { BridgeConfig, BridgeProject } from "./config.js";
 import { buildAgentPrompt } from "./prompt.js";
 import { saveScreenshot } from "./screenshot.js";

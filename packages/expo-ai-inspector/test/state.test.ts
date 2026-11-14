@@ -1,4 +1,4 @@
-import type { Selection } from "@expo-ai/protocol";
+import type { Selection } from "@dave-morgan/expo-ai-protocol";
 import { describe, expect, it } from "vitest";
 import {
   agentStep,

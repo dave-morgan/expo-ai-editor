@@ -1,7 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PairingManager } from "../src/pairing.js";
 
 async function fixture() {
@@ -82,4 +82,38 @@ describe("pairing", () => {
     expect(restored.authenticate(paired.token, "app")).toBeNull();
     expect(await readFile(config.sessionsFile, "utf8")).not.toContain("device-one");
   });
+});
+
+it("automatically rotates at expiry, reschedules manual rotations, and stops its timer", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(1_000_000);
+    const directory = await mkdtemp(join(tmpdir(), "bridge-rotation-"));
+    const onCodeRotated = vi.fn();
+    const manager = await PairingManager.create({
+      config: {
+        sessionsFile: join(directory, "sessions.json"),
+        codeTtlSeconds: 10,
+        tokenTtlHours: 12,
+      },
+      projectIds: ["app"],
+      now: Date.now,
+      onCodeRotated,
+    });
+    manager.startAutoRotation();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onCodeRotated).toHaveBeenCalledTimes(1);
+    expect(manager.getPairingCode().expiresAt.getTime()).toBe(1_020_000);
+    await vi.advanceTimersByTimeAsync(5000);
+    manager.regeneratePairingCode();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(onCodeRotated).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(onCodeRotated).toHaveBeenCalledTimes(3);
+    manager.stopAutoRotation();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(onCodeRotated).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
 });

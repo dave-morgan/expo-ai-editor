@@ -4,11 +4,11 @@ Expo AI Tools has three runtime parts and two build-time helpers:
 
 | Package | Runs on | Role |
 | --- | --- | --- |
-| `expo-ai-inspector` | Phone / simulator (dev builds only) | Overlay: select an element, collect metadata, dictate on-device, submit, show status |
-| `@expo-ai/inspector-transform` (`expo-ai-inspector/babel`) | Metro (build time, dev only) | Tags every app JSX element with `__aiSource="file:line:col"` |
+| `@dave-morgan/expo-ai-inspector` | Phone / simulator (dev builds only) | Overlay: select an element, collect metadata, dictate on-device, submit, show status |
+| `@dave-morgan/expo-ai-inspector-transform` (`@dave-morgan/expo-ai-inspector/babel`) | Metro (build time, dev only) | Tags every app JSX element with `__aiSource="file:line:col"` |
 | `expo-ai-bridge` | Developer machine | Pairing, authenticated WebSocket, queueing, prompt building, T3 delivery, run/refresh tracking |
-| `@expo-ai/t3-adapter` | Developer machine (inside the bridge) | Talks to T3 Code through its public `t3` CLI |
-| `@expo-ai/protocol` | Both sides | Versioned zod schemas for every frame |
+| `@dave-morgan/expo-ai-t3-adapter` | Developer machine (inside the bridge) | Talks to T3 Code through its public `t3` CLI |
+| `@dave-morgan/expo-ai-protocol` | Both sides | Versioned zod schemas for every frame |
 
 ```mermaid
 flowchart LR
@@ -87,7 +87,7 @@ independent steps: delivered, agent, files changed, refreshed.
 
 ## Adding another coding-agent adapter
 
-The bridge depends only on the `AgentAdapter` interface from `@expo-ai/t3-adapter`
+The bridge depends only on the `AgentAdapter` interface from `@dave-morgan/expo-ai-t3-adapter`
 (`packages/t3-adapter/src/agent-adapter.ts`):
 
 ```ts

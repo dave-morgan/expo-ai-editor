@@ -1,3 +1,7 @@
+import { randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
+import { z } from "zod";
+import { matchesControlSecret, writeControlFile } from "./control.js";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -7,10 +11,10 @@ import {
   LIMITS,
   PairRequestSchema,
   PROTOCOL_VERSION,
-} from "@expo-ai/protocol";
-import type { ClientMessage, ServerMessageInput } from "@expo-ai/protocol";
-import { T3CliAdapter } from "@expo-ai/t3-adapter";
-import type { AgentAdapter, AgentThread } from "@expo-ai/t3-adapter";
+} from "@dave-morgan/expo-ai-protocol";
+import type { ClientMessage, ServerMessageInput } from "@dave-morgan/expo-ai-protocol";
+import { T3CliAdapter } from "@dave-morgan/expo-ai-t3-adapter";
+import type { AgentAdapter, AgentThread } from "@dave-morgan/expo-ai-t3-adapter";
 import type { BridgeConfig, BridgeProject } from "./config.js";
 import { isLoopbackHost } from "./config.js";
 import { PairingManager, PairingError } from "./pairing.js";
@@ -18,6 +22,10 @@ import { FeedbackPipeline } from "./pipeline.js";
 import type { WatcherFactory } from "./pipeline.js";
 export * from "./config.js";
 export * from "./prompt.js";
+const { version } = z
+  .object({ version: z.string() })
+  .parse(createRequire(import.meta.url)("../package.json"));
+
 export interface Logger {
   info(message: string): void;
   warn(message: string): void;
@@ -53,6 +61,8 @@ export function createBridge(
   let pairing: PairingManager;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let started = false;
+  const controlSecret = randomBytes(32).toString("base64url");
+  let removeControl: (() => Promise<void>) | undefined;
   const send = (ws: WebSocket, message: ServerMessageInput) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(encodeServerMessage(message));
   };
@@ -81,9 +91,23 @@ export function createBridge(
       json(res, 200, {
         ok: true,
         name: "expo-ai-bridge",
-        version: "0.1.0",
+        version,
         protocolVersion: PROTOCOL_VERSION,
       });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/control/pairing-code") {
+      const address = req.socket.remoteAddress?.replace(/^::ffff:/i, "") ?? "";
+      const secret = req.headers["x-expo-ai-control"];
+      if (
+        !isLoopbackHost(address) ||
+        typeof secret !== "string" ||
+        !matchesControlSecret(secret, controlSecret)
+      ) {
+        json(res, 404, { error: "not_found" });
+        return;
+      }
+      json(res, 200, pairing.regeneratePairingCode());
       return;
     }
     if (req.method !== "POST" || req.url !== "/pair") {
@@ -176,7 +200,7 @@ export function createBridge(
       send(ws, {
         type: "welcome",
         protocolVersion: PROTOCOL_VERSION,
-        bridgeVersion: "0.1.0",
+        bridgeVersion: version,
         sessionId: message.clientId,
         project: { id: project.id, name: project.name },
         selectedThreadId: selected.get(project.id) ?? null,
@@ -324,6 +348,8 @@ export function createBridge(
         config: config.pairing,
         projectIds: config.projects.map((p) => p.id),
         now,
+        onCodeRotated: ({ code, expiresAt }) =>
+          logger.info(`Pairing code: ${code} (expires ${expiresAt.toISOString()})`),
         onCodeInvalidated: () =>
           logger.warn("Pairing code invalidated after ten failures; generate a new code with p"),
       });
@@ -351,9 +377,17 @@ export function createBridge(
       }, 20000);
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("No listening address");
+      try {
+        removeControl = await writeControlFile(config, address.port, controlSecret);
+      } catch (error) {
+        await this.stop();
+        throw error;
+      }
+      pairing.startAutoRotation();
       return { port: address.port, host: config.host };
     },
     async stop() {
+      pairing?.stopAutoRotation();
       pipeline.stop();
       if (heartbeat) clearInterval(heartbeat);
       for (const ws of wss.clients) ws.terminate();
@@ -364,6 +398,8 @@ export function createBridge(
           server.close((error) => (error ? reject(error) : resolve())),
         );
       started = false;
+      await removeControl?.();
+      removeControl = undefined;
     },
     getPairingCode() {
       if (!pairing) throw new Error("Start bridge first");

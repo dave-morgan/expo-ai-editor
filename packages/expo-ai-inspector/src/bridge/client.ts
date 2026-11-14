@@ -8,15 +8,125 @@ import {
   type FeedbackInput,
   type ServerMessage,
   type ThreadSummary,
-} from "@expo-ai/protocol";
+} from "@dave-morgan/expo-ai-protocol";
 
 export type { FeedbackInput };
+
+export type BridgeProbe =
+  | { ok: true; url: string; version: string; protocolVersion: number }
+  | { ok: false; url: string; kind: "unreachable" | "not_bridge" | "incompatible"; detail: string };
+
+export class BridgePairError extends Error {
+  constructor(
+    message: string,
+    public readonly kind: "unreachable" | "not_bridge" | "incompatible" | "rejected",
+    public readonly url: string,
+    public readonly code?: string,
+  ) {
+    super(message);
+    this.name = "BridgePairError";
+  }
+}
+
+function normalizeBridgeUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
+function reverseHint(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+    return `adb reverse tcp:${port} tcp:${port}`;
+  } catch {
+    return "adb reverse tcp:<bridge-port> tcp:<bridge-port>";
+  }
+}
+
+function unreachableDetail(url: string, error?: unknown): string {
+  const reason = error instanceof Error ? `: ${error.message}` : "";
+  return `Cannot reach bridge at ${url}${reason}. Check that the bridge is running and the device can reach it. For Android over USB, run ${reverseHint(url)}.`;
+}
+
+function notBridgeDetail(url: string, status?: number): string {
+  const response = status === undefined ? "" : ` (HTTP ${status})`;
+  return `${url}${response} did not respond as expo-ai-bridge. Check the bridge URL and the phone's proxy with adb shell settings get global http_proxy. For Android over USB, run ${reverseHint(url)}.`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export async function probeBridge(
+  url: string,
+  opts: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+): Promise<BridgeProbe> {
+  url = normalizeBridgeUrl(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 4000);
+  try {
+    const response = await (opts.fetchImpl ?? fetch)(`${url}/health`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!response.ok)
+      return { ok: false, url, kind: "not_bridge", detail: notBridgeDetail(url, response.status) };
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      if (controller.signal.aborted)
+        return { ok: false, url, kind: "unreachable", detail: unreachableDetail(url) };
+      return { ok: false, url, kind: "not_bridge", detail: notBridgeDetail(url) };
+    }
+    if (
+      !isRecord(body) ||
+      body.name !== "expo-ai-bridge" ||
+      typeof body.version !== "string" ||
+      typeof body.protocolVersion !== "number"
+    ) {
+      return { ok: false, url, kind: "not_bridge", detail: notBridgeDetail(url) };
+    }
+    if (body.protocolVersion !== PROTOCOL_VERSION) {
+      return {
+        ok: false,
+        url,
+        kind: "incompatible",
+        detail: `Bridge protocol ${body.protocolVersion} is incompatible with inspector protocol ${PROTOCOL_VERSION}. Update the bridge and inspector to matching versions.`,
+      };
+    }
+    return { ok: true, url, version: body.version, protocolVersion: body.protocolVersion };
+  } catch (error) {
+    return { ok: false, url, kind: "unreachable", detail: unreachableDetail(url, error) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function pairingRejection(code: string, projectId: string, message?: string): string {
+  switch (code) {
+    case "unauthorized":
+      return "The pairing code is invalid or expired. Press p in the bridge terminal or run expo-ai-bridge pair-code for a fresh code.";
+    case "rate_limited":
+      return "Too many pairing attempts. Wait a minute, then try again.";
+    case "unknown_project":
+      return `Unknown project "${projectId}". Match the inspector projectId to projects[].id in expo-ai-bridge.config.json.`;
+    case "invalid_message":
+      return "The bridge rejected the pairing request format. Check the projectId and clientId and update the bridge and inspector to matching versions.";
+    default:
+      return message ?? `Pairing rejected by the bridge (${code}).`;
+  }
+}
 
 export type ConnectionState =
   | { status: "idle" }
   | { status: "unpaired"; reason?: string }
   | { status: "connecting"; attempt: number }
-  | { status: "connected"; projectName: string; capabilities: AdapterCapabilities; screenshotsAccepted: boolean }
+  | {
+      status: "connected";
+      projectName: string;
+      capabilities: AdapterCapabilities;
+      screenshotsAccepted: boolean;
+    }
   | { status: "disconnected"; retryInMs: number; reason?: string }
   | { status: "failed"; reason: string };
 
@@ -150,9 +260,12 @@ export class BridgeClient {
   /** Exchanges a 6-digit pairing code shown by the bridge for a session token. */
   async pair(code: string, deviceName?: string): Promise<void> {
     const fetchImpl = this.options.fetchImpl ?? fetch;
+    const probe = await probeBridge(this.options.bridgeUrl, { fetchImpl });
+    if (!probe.ok) throw new BridgePairError(probe.detail, probe.kind, probe.url);
+    const url = probe.url;
     let response: Response;
     try {
-      response = await fetchImpl(this.options.bridgeUrl.replace(/\/$/, "") + "/pair", {
+      response = await fetchImpl(url + "/pair", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -163,11 +276,29 @@ export class BridgeClient {
         }),
       });
     } catch (error) {
-      throw new Error(`Cannot reach bridge at ${this.options.bridgeUrl}: ${(error as Error).message}`, { cause: error });
+      throw new BridgePairError(unreachableDetail(url, error), "unreachable", url);
     }
-    const body = (await response.json().catch(() => ({}))) as { token?: string; message?: string; error?: string };
-    if (!response.ok || !body.token) {
-      throw new Error(body.message ?? body.error ?? `Pairing failed (HTTP ${response.status})`);
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new BridgePairError(notBridgeDetail(url, response.status), "not_bridge", url);
+    }
+    if (!isRecord(body))
+      throw new BridgePairError(notBridgeDetail(url, response.status), "not_bridge", url);
+    if (!response.ok || typeof body.token !== "string" || !body.token) {
+      if (typeof body.error !== "string" || !body.error)
+        throw new BridgePairError(notBridgeDetail(url, response.status), "not_bridge", url);
+      throw new BridgePairError(
+        pairingRejection(
+          body.error,
+          this.options.projectId,
+          typeof body.message === "string" ? body.message : undefined,
+        ),
+        "rejected",
+        url,
+        body.error,
+      );
     }
     await this.options.tokenStore.set(this.clientIdKey, this.clientId);
     await this.options.tokenStore.set(this.tokenKey, body.token);
@@ -189,7 +320,11 @@ export class BridgeClient {
     const frame = encodeClientMessage(message);
     if (this.socket && this.socket.readyState === OPEN && this.state.status === "connected") {
       this.socket.send(frame);
-    } else if (message.type === "feedback.submit" || message.type === "feedback.cancel" || message.type === "refresh.event") {
+    } else if (
+      message.type === "feedback.submit" ||
+      message.type === "feedback.cancel" ||
+      message.type === "refresh.event"
+    ) {
       this.outbox.push(message);
     }
   }
@@ -203,7 +338,8 @@ export class BridgeClient {
     this.attempt += 1;
     this.setState({ status: "connecting", attempt: this.attempt });
     const create =
-      this.options.createSocket ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
+      this.options.createSocket ??
+      ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
     let socket: WebSocketLike;
     try {
       socket = create(this.wsUrl);
@@ -221,7 +357,9 @@ export class BridgeClient {
           projectId: this.options.projectId,
           clientId: this.clientId,
           device: this.options.device,
-          ...(this.options.inspectorVersion ? { inspectorVersion: this.options.inspectorVersion } : {}),
+          ...(this.options.inspectorVersion
+            ? { inspectorVersion: this.options.inspectorVersion }
+            : {}),
         }),
       );
     };
@@ -233,7 +371,8 @@ export class BridgeClient {
       if (this.socket !== socket) return;
       this.socket = null;
       this.clearHeartbeat();
-      if (this.stopped || this.state.status === "unpaired" || this.state.status === "failed") return;
+      if (this.stopped || this.state.status === "unpaired" || this.state.status === "failed")
+        return;
       this.scheduleReconnect(event.reason || (event.code ? `closed (${event.code})` : undefined));
     };
   }
