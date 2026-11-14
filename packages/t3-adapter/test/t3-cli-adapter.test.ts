@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -316,7 +316,7 @@ describe("CLI resolution", () => {
     await writeFile(join(dir, "t3.cmd"), "@echo fake");
     expect(
       await resolveCli({
-        env: { PATH: [join(dir, "missing"), dir].join(delimiter), PATHEXT: ".EXE;.CMD" },
+        env: { PATH: [join(dir, "missing"), dir].join(";"), PATHEXT: ".EXE;.CMD" },
         platform: "win32",
         homeDir: dir,
       }),
