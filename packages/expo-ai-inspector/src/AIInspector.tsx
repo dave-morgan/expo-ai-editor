@@ -1,13 +1,20 @@
-import { createRequestId, type DeliveryMode, type DeviceInfo, type ServerMessage, type ThreadSummary } from "@dave-morgan/expo-ai-protocol";
+import {
+  createRequestId,
+  type DeliveryMode,
+  type DeviceInfo,
+  type ServerMessage,
+  type ThreadSummary,
+} from "@dave-morgan/expo-ai-protocol";
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   Dimensions,
   Keyboard,
   NativeModules,
+  AppState,
   PixelRatio,
   Platform,
+  StatusBar,
   StyleSheet,
-  Text,
   View,
   Pressable,
   useWindowDimensions,
@@ -22,12 +29,17 @@ import { observeRefresh } from "./platform/refresh-observer";
 import { captureAppScreenshot, screenshotsSupported } from "./platform/screenshot";
 import { useSpeechInput } from "./platform/speech";
 import { createTokenStore } from "./platform/token-store";
-import { createInitialState, inspectorReducer, type InspectorSettings } from "./state/inspector-state";
+import {
+  createInitialState,
+  inspectorReducer,
+  type InspectorSettings,
+} from "./state/inspector-state";
 import { Highlight } from "./ui/Highlight";
 import { Panel, type PanelController } from "./ui/Panel";
-import { colors, shadow, space } from "./ui/theme";
+import { space } from "./ui/theme";
+import { Indicator } from "./ui/Indicator";
 
-export const INSPECTOR_VERSION = "0.1.0";
+export const INSPECTOR_VERSION = "0.2.0";
 const OVERLAY_NATIVE_ID = "expo-ai-inspector-overlay";
 
 export interface AIInspectorProps {
@@ -42,8 +54,8 @@ export interface AIInspectorProps {
   requireOnDeviceRecognition?: boolean;
   /** Initial settings (the developer can change them in the panel). */
   defaultSettings?: Partial<InspectorSettings>;
-  /** Where the floating button sits. */
-  buttonPosition?: "bottom-right" | "bottom-left" | "top-right" | "top-left";
+  /** Top of the indicator touch target. Default: below the status bar. */
+  indicatorTopInset?: number;
   /** Log selections and bridge status to the Metro console. */
   debug?: boolean;
   /** Opt in to rendering outside `__DEV__`. Never enable this in store builds. */
@@ -85,11 +97,17 @@ function resolveBridgeUrl(explicit: string | undefined, port: number | undefined
   if (explicit) return explicit;
   let scriptURL: string | null;
   try {
-    scriptURL = NativeModules?.SourceCode?.getConstants?.().scriptURL ?? NativeModules?.SourceCode?.scriptURL ?? null;
+    scriptURL =
+      NativeModules?.SourceCode?.getConstants?.().scriptURL ??
+      NativeModules?.SourceCode?.scriptURL ??
+      null;
   } catch {
     scriptURL = null;
   }
-  const webHostname = Platform.OS === "web" ? (globalThis as { location?: { hostname?: string } }).location?.hostname : null;
+  const webHostname =
+    Platform.OS === "web"
+      ? (globalThis as { location?: { hostname?: string } }).location?.hostname
+      : null;
   return discoverBridgeUrl({
     hostUri: Constants?.expoConfig?.hostUri ?? Constants?.expoGoConfig?.debuggerHost ?? null,
     scriptURL,
@@ -100,7 +118,10 @@ function resolveBridgeUrl(explicit: string | undefined, port: number | undefined
 
 function deviceInfo(): DeviceInfo {
   const window = Dimensions.get("window");
-  const platform = Platform.OS === "ios" || Platform.OS === "android" || Platform.OS === "web" ? Platform.OS : "other";
+  const platform =
+    Platform.OS === "ios" || Platform.OS === "android" || Platform.OS === "web"
+      ? Platform.OS
+      : "other";
   return {
     platform,
     osVersion: String(Platform.Version ?? ""),
@@ -123,10 +144,20 @@ function InspectorRoot(props: AIInspectorProps) {
   const [state, dispatch] = useReducer(inspectorReducer, props.defaultSettings, createInitialState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const [appActive, setAppActive] = useState(
+    AppState.currentState == null || AppState.currentState === "active",
+  );
+  const appActiveRef = useRef(appActive);
 
-  const [bridgeUrl, setBridgeUrl] = useState(() => resolveBridgeUrl(props.bridgeUrl, props.bridgePort));
+  const [bridgeUrl, setBridgeUrl] = useState(() =>
+    resolveBridgeUrl(props.bridgeUrl, props.bridgePort),
+  );
   const [connection, setConnection] = useState<ConnectionState>({ status: "idle" });
-  const [threads, setThreads] = useState<{ threads: ThreadSummary[]; selectedThreadId: string | null; error?: string }>({
+  const [threads, setThreads] = useState<{
+    threads: ThreadSummary[];
+    selectedThreadId: string | null;
+    error?: string;
+  }>({
     threads: [],
     selectedThreadId: null,
   });
@@ -151,21 +182,31 @@ function InspectorRoot(props: AIInspectorProps) {
 
   useEffect(() => {
     if (!client) {
-      setConnection({ status: "unpaired", reason: "Bridge URL could not be detected; enter it below." });
+      setConnection({
+        status: "unpaired",
+        reason: "Bridge URL could not be detected; enter it below.",
+      });
       return;
     }
     const offState = client.on("state", setConnection);
     const offThreads = client.on("threads", (next) => {
       // The bridge keeps the thread choice in memory; restore ours after a bridge restart.
       const remembered = lastThreadRef.current;
-      if (!next.selectedThreadId && remembered && next.threads.some((t) => t.threadId === remembered)) {
+      if (
+        !next.selectedThreadId &&
+        remembered &&
+        next.threads.some((t) => t.threadId === remembered)
+      ) {
         client.send({ type: "threads.select", threadId: remembered });
       }
       if (next.selectedThreadId) lastThreadRef.current = next.selectedThreadId;
       setThreads(next);
     });
     const offMessage = client.on("message", (message: ServerMessage) => {
-      if (props.debug && message.type === "request.status") console.log(`[expo-ai-inspector] ${message.requestId} ${message.phase}${message.detail ? `: ${message.detail}` : ""}`);
+      if (props.debug && message.type === "request.status")
+        console.log(
+          `[expo-ai-inspector] ${message.requestId} ${message.phase}${message.detail ? `: ${message.detail}` : ""}`,
+        );
       dispatch({ type: "server", message, now: Date.now() });
     });
     void client.start();
@@ -181,17 +222,30 @@ function InspectorRoot(props: AIInspectorProps) {
   useEffect(() => {
     const { supported, unsubscribe } = observeRefresh((event) => {
       const current = stateRef.current;
-      const active = current.activeRequestId ? current.requests[current.activeRequestId] : undefined;
+      const active = current.activeRequestId
+        ? current.requests[current.activeRequestId]
+        : undefined;
       if (!active || !active.seen.submitted) return;
-      client?.send({ type: "refresh.event", kind: event.kind, at: new Date().toISOString(), ...(event.message ? { message: event.message } : {}) });
+      client?.send({
+        type: "refresh.event",
+        kind: event.kind,
+        at: new Date().toISOString(),
+        ...(event.message ? { message: event.message } : {}),
+      });
     });
     setRefreshSupported(supported);
     return unsubscribe;
   }, [client]);
 
   useEffect(() => {
-    const show = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", (e) => setKeyboardHeight(e.endCoordinates.height));
-    const hide = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () => setKeyboardHeight(0));
+    const show = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => setKeyboardHeight(e.endCoordinates.height),
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => setKeyboardHeight(0),
+    );
     return () => {
       show.remove();
       hide.remove();
@@ -200,7 +254,11 @@ function InspectorRoot(props: AIInspectorProps) {
 
   // --- submission -----------------------------------------------------------------------------
   const sendRequest = useCallback(
-    async (instruction: string, inputMethod: "voice" | "typed" | "voice-edited", reuseId?: string) => {
+    async (
+      instruction: string,
+      inputMethod: "voice" | "typed" | "voice-edited",
+      reuseId?: string,
+    ) => {
       const current = stateRef.current;
       const text = instruction.trim();
       if (!text) {
@@ -215,6 +273,7 @@ function InspectorRoot(props: AIInspectorProps) {
       if (!threadId) {
         dispatch({ type: "error", message: "Choose a T3 thread first." });
         dispatch({ type: "setView", view: "threads" });
+        dispatch({ type: "open" });
         return;
       }
       const selection = current.selection ?? undefined;
@@ -240,7 +299,9 @@ function InspectorRoot(props: AIInspectorProps) {
           requestId,
           instruction: text,
           ...(selection?.componentName ? { componentName: selection.componentName } : {}),
-          ...(selection?.source ? { sourceLabel: `${selection.source.file}:${selection.source.line}` } : {}),
+          ...(selection?.source
+            ? { sourceLabel: `${selection.source.file}:${selection.source.line}` }
+            : {}),
           threadId,
           createdAt: Date.now(),
           payload: { instruction: text, ...(selection ? { selection } : {}), inputMethod },
@@ -273,6 +334,7 @@ function InspectorRoot(props: AIInspectorProps) {
       onFinal: (transcript) => {
         dispatch({ type: "appendVoice", text: transcript });
         if (stateRef.current.settings.autoSubmit) autoSubmitRef.current = true;
+        else dispatch({ type: "open" });
       },
     },
     Platform.OS,
@@ -281,17 +343,25 @@ function InspectorRoot(props: AIInspectorProps) {
   useEffect(() => {
     if (autoSubmitRef.current && state.transcript.trim()) {
       autoSubmitRef.current = false;
-      void sendRequest(state.transcript, state.inputMethod === "typed" ? "voice" : state.inputMethod);
+      void sendRequest(
+        state.transcript,
+        state.inputMethod === "typed" ? "voice" : state.inputMethod,
+      );
     }
   }, [state.transcript, state.inputMethod, sendRequest]);
 
   // --- selection --------------------------------------------------------------------------------
   const pttActive = useRef(false);
+  const selectionAttempt = useRef(0);
   const selectAt = useCallback(
     async (x: number, y: number) => {
+      if (!stateRef.current.selectionEnabled || stateRef.current.selecting) return false;
+      const attempt = ++selectionAttempt.current;
       dispatch({ type: "hitTestStarted" });
       try {
         const hit = await hitTest(overlayRef.current, x, y);
+        if (attempt !== selectionAttempt.current || !stateRef.current.selectionEnabled)
+          return false;
         if (!hit) {
           dispatch({ type: "selectionFailed", message: "Nothing selectable at that point." });
           return false;
@@ -300,50 +370,57 @@ function InspectorRoot(props: AIInspectorProps) {
           host: hit.fiber,
           bounds: hit.bounds,
           ...(screen ? { screen } : {}),
-          ...(hit.overlappingCandidates !== undefined ? { overlappingCandidates: hit.overlappingCandidates } : {}),
+          ...(hit.overlappingCandidates !== undefined
+            ? { overlappingCandidates: hit.overlappingCandidates }
+            : {}),
           flattenStyle: StyleSheet.flatten as (style: unknown) => unknown,
           hitTestStrategy: hit.strategy,
         });
-        if (props.debug) console.log(`[expo-ai-inspector] selected via ${hit.strategy}: ${JSON.stringify(selection)}`);
+        if (props.debug)
+          console.log(
+            `[expo-ai-inspector] selected via ${hit.strategy}: ${JSON.stringify(selection)}`,
+          );
         dispatch({ type: "selected", selection });
         return true;
       } catch (error) {
-        dispatch({ type: "selectionFailed", message: `Selection failed: ${(error as Error).message}` });
+        if (attempt !== selectionAttempt.current || !stateRef.current.selectionEnabled)
+          return false;
+        dispatch({
+          type: "selectionFailed",
+          message: `Selection failed: ${(error as Error).message}`,
+        });
         return false;
       }
     },
     [screen, props.debug],
   );
 
-  const pressStart = useRef<{ x: number; y: number; timer: ReturnType<typeof setTimeout> | null; long: boolean } | null>(null);
-  const onCatcherGrant = (event: GestureResponderEvent) => {
-    const { pageX, pageY } = event.nativeEvent;
-    const entry = { x: pageX, y: pageY, timer: null as ReturnType<typeof setTimeout> | null, long: false };
-    entry.timer = setTimeout(async () => {
-      entry.long = true;
-      // Long-press: select and start press-to-talk dictation until release.
-      if (await selectAt(entry.x, entry.y)) {
-        if (pressStart.current === entry && speech.support?.ok !== false) {
-          pttActive.current = true;
-          void speech.start();
-        }
-      }
-    }, 450);
-    pressStart.current = entry;
-  };
-  const onCatcherRelease = () => {
-    const entry = pressStart.current;
-    pressStart.current = null;
-    if (!entry) return;
-    if (entry.timer) clearTimeout(entry.timer);
-    if (entry.long) {
-      if (pttActive.current) {
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      appActiveRef.current = next === "active";
+      setAppActive(appActiveRef.current);
+      if (next !== "active") {
         pttActive.current = false;
-        speech.stop();
+        speech.cancel();
       }
-      return;
-    }
-    void selectAt(entry.x, entry.y);
+    });
+    return () => subscription.remove();
+  }, [speech.cancel]);
+
+  useEffect(() => {
+    if (speech.error) dispatch({ type: "open" });
+  }, [speech.error]);
+
+  const openPanel = () => {
+    pttActive.current = false;
+    speech.cancel();
+    dispatch({ type: "open" });
+  };
+  const toggleSelection = () => {
+    selectionAttempt.current++;
+    pttActive.current = false;
+    speech.cancel();
+    dispatch({ type: "toggleSelection" });
   };
 
   // --- controller for the panel -----------------------------------------------------------------
@@ -370,7 +447,10 @@ function InspectorRoot(props: AIInspectorProps) {
       speech.cancel();
       dispatch({ type: "close" });
     },
-    reselect: () => dispatch({ type: "startSelecting" }),
+    reselect: () => {
+      speech.cancel();
+      dispatch({ type: "startSelecting" });
+    },
     clearSelection: () => dispatch({ type: "clearSelection" }),
     setTranscript: (text) => dispatch({ type: "setTranscript", text, edited: true }),
     toggleMic: () => {
@@ -411,7 +491,13 @@ function InspectorRoot(props: AIInspectorProps) {
       const normalized = url.replace(/\/$/, "");
       if (normalized !== bridgeUrl) {
         // Pair through a temporary client, then switch URL: the new client finds the stored token.
-        const temp = new BridgeClient({ bridgeUrl: normalized, projectId, clientId, device: deviceInfo(), tokenStore });
+        const temp = new BridgeClient({
+          bridgeUrl: normalized,
+          projectId,
+          clientId,
+          device: deviceInfo(),
+          tokenStore,
+        });
         await temp.pair(code, deviceInfo().deviceName);
         temp.stop();
         setBridgeUrl(normalized);
@@ -429,127 +515,98 @@ function InspectorRoot(props: AIInspectorProps) {
   };
 
   const selection = state.selection;
-  const showHighlight = selection && state.mode !== "closed";
-  const buttonPos = props.buttonPosition ?? "bottom-right";
+  const recording = speech.status === "starting" || speech.status === "listening";
+  const activeRequest = state.activeRequestId ? state.requests[state.activeRequestId] : undefined;
+  const tone =
+    state.error ||
+    speech.error ||
+    connection.status === "failed" ||
+    activeRequest?.phase === "failed" ||
+    activeRequest?.phase === "agent_failed"
+      ? "error"
+      : connection.status !== "connected"
+        ? "disconnected"
+        : activeRequest?.phase === "refresh_observed"
+          ? "done"
+          : activeRequest &&
+              ![
+                "cancelled",
+                "refresh_failed",
+                "native_rebuild_required",
+                "agent_completed",
+              ].includes(activeRequest.phase)
+            ? "working"
+            : "ready";
+  const topInset =
+    props.indicatorTopInset ??
+    (Number(Constants?.statusBarHeight) ||
+      StatusBar.currentHeight ||
+      (Platform.OS === "ios" ? 44 : 0));
 
   return (
     <View
       ref={overlayRef}
       nativeID={OVERLAY_NATIVE_ID}
       collapsable={false}
-      pointerEvents="box-none"
+      pointerEvents={hiddenForCapture ? "none" : "box-none"}
       style={[StyleSheet.absoluteFill, hiddenForCapture && styles.hidden]}
     >
-      {state.mode === "selecting" ? (
-        <View
-          style={[StyleSheet.absoluteFill, styles.catcher]}
-          onStartShouldSetResponder={() => true}
-          onMoveShouldSetResponder={() => true}
-          onResponderTerminationRequest={() => false}
-          onResponderGrant={onCatcherGrant}
-          onResponderRelease={onCatcherRelease}
-          onResponderTerminate={() => {
-            if (pressStart.current?.timer) clearTimeout(pressStart.current.timer);
-            pressStart.current = null;
-          }}
+      {state.selectionEnabled && !state.panelOpen ? (
+        <Pressable
+          testID="inspector-selection-layer"
+          style={StyleSheet.absoluteFill}
+          onPress={(event: GestureResponderEvent) =>
+            void selectAt(event.nativeEvent.pageX, event.nativeEvent.pageY)
+          }
           accessibilityLabel="Inspector selection layer. Tap an element to select it."
         />
       ) : null}
-
-      {showHighlight ? (
+      {selection && state.selectionEnabled ? (
         <Highlight
           bounds={selection.bounds}
-          title={selection.componentName ? `${selection.componentName} › ${selection.elementType}` : selection.elementType}
-          {...(selection.source ? { subtitle: `${selection.source.file.split("/").pop()}:${selection.source.line}` } : {})}
+          title={
+            selection.componentName
+              ? `${selection.componentName} › ${selection.elementType}`
+              : selection.elementType
+          }
+          {...(selection.source
+            ? { subtitle: `${selection.source.file.split("/").pop()}:${selection.source.line}` }
+            : {})}
           window={window}
         />
       ) : null}
-
-      {state.mode === "selecting" ? (
-        <View pointerEvents="box-none" style={[styles.banner, shadow]}>
-          <Text style={styles.bannerText}>{state.selecting ? "Inspecting…" : "Tap an element · hold to select and dictate"}</Text>
-          <Pressable
-            onPress={() => (selection ? dispatch({ type: "selected", selection }) : dispatch({ type: "close" }))}
-            accessibilityRole="button"
-            accessibilityLabel="Stop selecting"
-            hitSlop={10}
-          >
-            <Text style={styles.bannerAction}>{selection ? "Done" : "Cancel"}</Text>
-          </Pressable>
-        </View>
+      {state.panelOpen ? (
+        <Panel c={controller} bottomInset={keyboardHeight > 0 ? keyboardHeight : Math.max(space.sm, SAFE_BOTTOM + space.xs)} />
       ) : null}
-      {state.mode === "selecting" && state.error ? (
-        <View pointerEvents="none" style={styles.toast}>
-          <Text style={styles.toastText}>{state.error}</Text>
-        </View>
-      ) : null}
-
-      {state.mode === "panel" ? <Panel c={controller} bottomInset={keyboardHeight > 0 ? keyboardHeight : space.lg} /> : null}
-
-      {state.mode === "closed" ? (
-        <Pressable
-          onPress={() => dispatch({ type: "open" })}
-          onLongPress={() => dispatch({ type: "startSelecting" })}
-          accessibilityRole="button"
-          accessibilityLabel="Open AI inspector"
-          accessibilityHint="Long-press to start selecting immediately"
-          style={({ pressed }) => [styles.fab, fabPosition(buttonPos), shadow, pressed && { transform: [{ scale: 0.94 }] }]}
-        >
-          <View style={styles.fabRing}>
-            <View style={styles.fabDot} />
-          </View>
-          {connection.status !== "connected" ? <View style={[styles.fabBadge, { backgroundColor: connection.status === "unpaired" ? colors.textFaint : colors.warning }]} /> : null}
-        </Pressable>
-      ) : null}
+      <Indicator
+        enabled={state.selectionEnabled && appActive}
+        recording={recording}
+        tone={tone}
+        top={topInset}
+        onToggle={toggleSelection}
+        onOpenPanel={openPanel}
+        onHoldStart={() => {
+          if (
+            !appActiveRef.current ||
+            !stateRef.current.selectionEnabled ||
+            speech.status === "stopping"
+          )
+            return;
+          pttActive.current = true;
+          void speech.start();
+        }}
+        onHoldEnd={controller.micPressOut}
+        onHoldCancel={() => {
+          pttActive.current = false;
+          speech.cancel();
+        }}
+      />
     </View>
   );
 }
 
-function fabPosition(position: NonNullable<AIInspectorProps["buttonPosition"]>) {
-  const vertical = position.startsWith("top") ? { top: 64 } : { bottom: 96 };
-  const horizontal = position.endsWith("left") ? { left: 16 } : { right: 16 };
-  return { ...vertical, ...horizontal };
-}
+const styles = StyleSheet.create({ hidden: { opacity: 0 } });
 
-const styles = StyleSheet.create({
-  hidden: { opacity: 0 },
-  catcher: { backgroundColor: colors.scrim },
-  banner: {
-    position: "absolute",
-    top: 56,
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm + 2,
-    borderRadius: 999,
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
-  },
-  bannerText: { color: colors.text, fontSize: 13, fontWeight: "500" },
-  bannerAction: { color: "#B9AFFF", fontSize: 13, fontWeight: "700" },
-  toast: {
-    position: "absolute",
-    bottom: 120,
-    alignSelf: "center",
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm,
-    borderRadius: 999,
-    backgroundColor: colors.dangerSoft,
-  },
-  toastText: { color: colors.danger, fontSize: 13, fontWeight: "600" },
-  fab: {
-    position: "absolute",
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  fabRing: { width: 22, height: 22, borderRadius: 11, borderWidth: 2.5, borderColor: "#fff", alignItems: "center", justifyContent: "center" },
-  fabDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff" },
-  fabBadge: { position: "absolute", top: 3, right: 3, width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.accent },
-});
+/** Bottom system inset (home indicator / gesture bar) so the composer never sits under it. */
+const SAFE_BOTTOM =
+  optional.safeArea()?.initialWindowMetrics?.insets.bottom ?? (Platform.OS === "android" ? 24 : 0);

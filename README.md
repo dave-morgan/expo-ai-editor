@@ -32,7 +32,7 @@ flowchart LR
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [`@dave-morgan/expo-ai-inspector`](packages/expo-ai-inspector)             | React Native overlay + Expo config plugin + Babel entry                  |
 | [`@dave-morgan/expo-ai-inspector-transform`](packages/inspector-transform) | Dev-only Babel plugin tagging JSX with source locations                  |
-| [`@dave-morgan/expo-ai-bridge`](packages/expo-ai-bridge)                                | Node server/CLI: pairing, queueing, prompt building, T3 delivery, status |
+| [`@dave-morgan/expo-ai-bridge`](packages/expo-ai-bridge)                   | Node server/CLI: pairing, queueing, prompt building, T3 delivery, status |
 | [`@dave-morgan/expo-ai-t3-adapter`](packages/t3-adapter)                   | `AgentAdapter` interface + T3 CLI implementation                         |
 | [`@dave-morgan/expo-ai-protocol`](packages/protocol)                       | Versioned zod schemas shared by phone and bridge                         |
 | [`apps/example-expo`](apps/example-expo)                                   | Example app: profile, settings form, cards, design system                |
@@ -87,8 +87,9 @@ Bridge config (`expo-ai-bridge.config.json`):
 { "projects": [{ "id": "<your expo slug>", "name": "My app", "root": ".", "t3Project": "." }] }
 ```
 
-Then in the app: purple button → **Pair** (enter the code) → choose your T3 thread → tap an element
-→ dictate → **Send to agent**.
+Then in the app: pull down from the thin top indicator to **Pair** and choose your T3 thread.
+Tap the indicator to toggle selection, tap an element, then hold the indicator to dictate.
+Release to review and **Send to agent**. Turn selection off to use the app normally.
 
 ## Working in this repository
 

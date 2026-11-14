@@ -22,3 +22,6 @@ android/
 *.p12
 *.mobileprovision
 dist-packs/
+
+# Local demo recordings (large binaries)
+artifacts/

@@ -1,18 +1,33 @@
 import type { DeliveryMode, Selection, ThreadSummary } from "@dave-morgan/expo-ai-protocol";
-import React, { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  Animated,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import type { BridgeProbe, ConnectionState } from "../bridge/client";
 import type { SpeechStatus, SpeechSupport } from "../platform/speech";
 import {
-  agentStep,
   canCancel,
   canRetry,
-  PHASE_LABELS,
-  refreshStep,
+  formatElapsed,
+  requestLifecycle,
+  requestOutcome,
   type InspectorState,
+  type LifecycleStage,
+  type StageState,
   type TrackedRequest,
 } from "../state/inspector-state";
-import { Badge, Button, IconButton, StatusDot } from "./primitives";
+import { IconButton } from "./primitives";
+import { DEFAULT_DETENT, detentHeight, dragHeight, settle, stepDetent, type Detent } from "./sheet";
 import { colors, mono, radius, space, type } from "./theme";
 
 export interface PanelController {
@@ -77,249 +92,416 @@ export function connectionSummary(connection: ConnectionState): { label: string;
   }
 }
 
+const STAGE_TONE: Record<StageState, string> = {
+  done: colors.success,
+  active: colors.accent,
+  waiting: colors.warning,
+  failed: colors.danger,
+  pending: colors.textFaint,
+};
+
+// --- sheet ---------------------------------------------------------------------------------------
+
+/** Animated height with ¼ / ½ / ¾ detents. Only the top bar drags, so lists scroll normally. */
+function useSheet(onDismiss: () => void) {
+  const { height: windowHeight } = useWindowDimensions();
+  const [detent, setDetent] = useState<Detent>(DEFAULT_DETENT);
+  const height = useRef(new Animated.Value(detentHeight(DEFAULT_DETENT, windowHeight))).current;
+  const live = useRef({ windowHeight, detent, start: 0, reduceMotion: false, onDismiss });
+  live.current.windowHeight = windowHeight;
+  live.current.detent = detent;
+  live.current.onDismiss = onDismiss;
+
+  useEffect(() => {
+    let alive = true;
+    void AccessibilityInfo.isReduceMotionEnabled?.().then((reduced) => {
+      if (alive) live.current.reduceMotion = reduced;
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const snapTo = (next: Detent) => {
+    setDetent(next);
+    const toValue = detentHeight(next, live.current.windowHeight);
+    if (live.current.reduceMotion) height.setValue(toValue);
+    else Animated.spring(height, { toValue, useNativeDriver: false, damping: 24, stiffness: 260, mass: 0.9 }).start();
+  };
+
+  // Rotation or split-screen: keep the same detent at the new size.
+  useEffect(() => {
+    height.setValue(detentHeight(detent, windowHeight));
+  }, [windowHeight]);
+
+  const responder = useMemo(
+    () =>
+      PanResponder.create({
+        // Capture only clear vertical drags, so taps on the header's buttons still land.
+        onMoveShouldSetPanResponderCapture: (_e, g) => Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
+        onPanResponderGrant: () => {
+          height.stopAnimation((value) => {
+            live.current.start = value;
+          });
+        },
+        onPanResponderMove: (_e, g) => height.setValue(dragHeight(live.current.start, g.dy, live.current.windowHeight)),
+        onPanResponderRelease: (_e, g) => {
+          const current = dragHeight(live.current.start, g.dy, live.current.windowHeight);
+          const target = settle(current, g.vy, live.current.windowHeight);
+          if (target === "dismiss") live.current.onDismiss();
+          else snapTo(target);
+        },
+        onPanResponderTerminate: () => snapTo(live.current.detent),
+      }),
+    [],
+  );
+
+  return { height, detent, snapTo, panHandlers: responder.panHandlers, windowHeight };
+}
+
 export function Panel({ c, bottomInset }: { c: PanelController; bottomInset: number }) {
-  const { state } = c;
+  const sheet = useSheet(c.close);
+  const view = c.connection.status === "unpaired" ? "pair" : c.state.view === "history" ? "main" : c.state.view;
+  const sub = view === "settings" || view === "threads";
+
+  return (
+    <View style={[styles.sheet, { paddingBottom: bottomInset }]} accessibilityViewIsModal>
+      <Animated.View style={{ height: sheet.height, maxHeight: sheet.windowHeight - bottomInset - 40 }}>
+        <View {...sheet.panHandlers}>
+          <Pressable
+            onPress={() => sheet.snapTo(sheet.detent === 0.75 ? 0.5 : stepDetent(sheet.detent, 1))}
+            accessibilityRole="adjustable"
+            accessibilityLabel="Panel height"
+            accessibilityValue={{ text: sheet.detent === 0.25 ? "quarter" : sheet.detent === 0.5 ? "half" : "three quarters" }}
+            accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
+            onAccessibilityAction={(e) => sheet.snapTo(stepDetent(sheet.detent, e.nativeEvent.actionName === "increment" ? 1 : -1))}
+            hitSlop={{ top: 8, bottom: 4, left: 60, right: 60 }}
+            style={styles.grabberZone}
+          >
+            <View style={styles.grabber} />
+          </Pressable>
+          {sub ? <SubHeader c={c} title={view === "threads" ? "Thread" : "Settings"} /> : <MainHeader c={c} paired={view !== "pair"} />}
+        </View>
+        {view === "pair" && <PairView c={c} />}
+        {view === "threads" && <ThreadsView c={c} />}
+        {view === "settings" && <MenuView c={c} />}
+        {view === "main" && <MainView c={c} compact={sheet.detent === 0.25} />}
+      </Animated.View>
+    </View>
+  );
+}
+
+function MainHeader({ c, paired }: { c: PanelController; paired: boolean }) {
   const conn = connectionSummary(c.connection);
   const thread = c.threads.find((t) => t.threadId === c.selectedThreadId);
-  const view = c.connection.status === "unpaired" ? "pair" : state.view;
-
-  return (
-    <View style={[styles.panel, { paddingBottom: space.md + bottomInset }]} accessibilityViewIsModal>
-      <View style={styles.grabber} />
-      <View style={styles.header}>
-        <Pressable
-          style={styles.headerTarget}
-          onPress={() => c.setView(view === "threads" ? "main" : "threads")}
-          accessibilityRole="button"
-          accessibilityLabel="Choose T3 thread"
-        >
-          <StatusDot color={conn.color} />
-          <View style={{ flexShrink: 1 }}>
-            <Text style={type.title} numberOfLines={1}>
-              {thread ? thread.title : c.connection.status === "connected" ? "Choose a T3 thread" : conn.label}
-            </Text>
-            <Text style={type.caption} numberOfLines={1}>
-              {c.connection.status === "connected"
-                ? `${c.connection.projectName} · ${thread ? thread.status : "no thread"}`
-                : view === "pair"
-                  ? `Project ${c.projectId}`
-                  : (c.bridgeUrl ?? "Bridge URL unknown")}
-            </Text>
-          </View>
-          <Text style={styles.chevron}>{view === "threads" ? "▴" : "▾"}</Text>
-        </Pressable>
-        <IconButton glyph="⟲" label="Recent instructions" active={view === "history"} onPress={() => c.setView(view === "history" ? "main" : "history")} />
-        <IconButton glyph="⚙" label="Settings" active={view === "settings"} onPress={() => c.setView(view === "settings" ? "main" : "settings")} />
-        <IconButton glyph="✕" label="Close inspector" onPress={c.close} />
-      </View>
-
-      {view === "pair" && <PairView c={c} />}
-      {view === "threads" && <ThreadsView c={c} />}
-      {view === "history" && <HistoryView c={c} />}
-      {view === "settings" && <SettingsView c={c} />}
-      {view === "main" && <MainView c={c} />}
-    </View>
-  );
-}
-
-function SelectionSummary({ selection, c }: { selection: Selection; c: PanelController }) {
-  const tone = selection.confidence === "high" ? "good" : selection.confidence === "medium" ? "warn" : "bad";
-  return (
-    <View style={styles.card}>
-      <View style={styles.rowBetween}>
-        <View style={{ flexShrink: 1 }}>
-          <Text style={type.title} numberOfLines={1}>
-            {selection.componentName ? `${selection.componentName} › ` : ""}
-            <Text style={{ color: "#B9AFFF" }}>{selection.elementType}</Text>
-          </Text>
-          {selection.source ? (
-            <Text style={[type.code, { color: colors.textMuted }]} numberOfLines={1} ellipsizeMode="head">
-              {selection.source.file}:{selection.source.line}
-            </Text>
-          ) : (
-            <Text style={type.caption}>Source location unavailable</Text>
-          )}
-        </View>
-        <Badge label={selection.confidence} tone={tone} />
-      </View>
-      {selection.visibleText ? (
-        <Text style={[type.caption, { marginTop: space.xs }]} numberOfLines={2}>
-          “{selection.visibleText}”
-        </Text>
-      ) : null}
-      {selection.confidenceNotes.length > 0 && selection.confidence !== "high" ? (
-        <Text style={[type.caption, { color: colors.warning, marginTop: space.xs }]} numberOfLines={3}>
-          {selection.confidenceNotes[0]}
-        </Text>
-      ) : null}
-      <View style={[styles.row, { marginTop: space.sm, gap: space.sm }]}>
-        <Button compact label="Reselect" onPress={c.reselect} />
-        <Button compact variant="ghost" label="Clear" onPress={c.clearSelection} />
-      </View>
-    </View>
-  );
-}
-
-function MainView({ c }: { c: PanelController }) {
-  const { state, speech } = c;
-  const active = state.activeRequestId ? state.requests[state.activeRequestId] : undefined;
-  const listening = speech.status === "listening" || speech.status === "starting";
-  const speechBlocked = speech.support && !speech.support.ok;
   const connected = c.connection.status === "connected";
-  const canSubmit = state.transcript.trim().length > 0 && !!c.selectedThreadId;
-
+  const title = !paired ? "Pair with bridge" : connected ? (thread ? thread.title || thread.threadId : "Choose a thread") : conn.label;
   return (
-    <ScrollView style={styles.body} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.md }}>
-      {state.selection ? (
-        <SelectionSummary selection={state.selection} c={c} />
-      ) : (
-        <View style={styles.card}>
-          <Text style={type.body}>No element selected.</Text>
-          <Text style={type.caption}>You can still send an instruction without a selection.</Text>
-          <Button compact label="Select element" onPress={c.reselect} style={{ marginTop: space.sm, alignSelf: "flex-start" }} />
-        </View>
-      )}
-
-      {active ? <RequestStatus request={active} c={c} /> : null}
-
-      <View>
-        <View style={styles.inputWrap}>
-          <TextInput
-            value={listening && speech.partial ? `${state.transcript}${state.transcript ? " " : ""}${speech.partial}` : state.transcript}
-            onChangeText={c.setTranscript}
-            editable={!listening}
-            placeholder={listening ? "Listening…" : "Describe the change, or hold the mic to dictate"}
-            placeholderTextColor={colors.textFaint}
-            multiline
-            style={styles.input}
-            accessibilityLabel="Instruction"
-          />
-          <Pressable
-            onPress={c.toggleMic}
-            onLongPress={c.micPressIn}
-            onPressOut={c.micPressOut}
-            delayLongPress={250}
-            disabled={!!speechBlocked}
-            accessibilityRole="button"
-            accessibilityLabel={listening ? "Stop dictation" : "Start dictation"}
-            accessibilityHint="Tap to toggle, or press and hold to talk"
-            style={({ pressed }) => [styles.mic, listening && styles.micActive, pressed && { opacity: 0.85 }, speechBlocked && { opacity: 0.35 }]}
-          >
-            <Text style={styles.micGlyph}>{listening ? "■" : "🎙"}</Text>
-          </Pressable>
-        </View>
-        {speech.error || (speechBlocked && speech.support?.reason) ? (
-          <View style={[styles.row, { marginTop: space.xs, gap: space.sm, flexWrap: "wrap" }]}>
-            <Text style={[type.caption, { color: colors.warning, flexShrink: 1 }]}>{speech.error ?? speech.support?.reason}</Text>
-            {speech.support?.canDownloadModel ? <Button compact label={`Download ${speech.locale} model`} onPress={c.downloadSpeechModel} /> : null}
-            {speech.onlineAvailable ? (
-              <Button
-                compact
-                label="Use online recognition"
-                onPress={c.allowOnlineSpeech}
-                accessibilityHint="For this session, audio goes to the phone's speech service instead of staying on the device"
-              />
-            ) : null}
-          </View>
-        ) : (
-          <Text style={[type.caption, { marginTop: space.xs }]}>
-            {listening
-              ? `${speech.onDevice ? "On-device" : "Online"} · ${speech.locale}`
-              : state.inputMethod === "typed"
-                ? "Typed"
-                : state.inputMethod === "voice"
-                  ? speech.onDevice
-                    ? "Dictated on device"
-                    : "Dictated (online recognition)"
-                  : "Dictated, edited"}
-          </Text>
-        )}
-      </View>
-
-      {state.error ? <Text style={[type.caption, { color: colors.danger }]}>{state.error}</Text> : null}
-
-      <View style={[styles.row, { gap: space.sm }]}>
-        <Button
-          variant="primary"
-          label={connected ? "Send to agent" : "Queue (offline)"}
-          onPress={c.submit}
-          disabled={!canSubmit}
-          style={{ flex: 1 }}
-        />
-        <Button variant="ghost" label="Cancel" onPress={c.close} />
-      </View>
-      {!c.selectedThreadId && connected ? (
-        <Text style={type.caption}>Pick the T3 thread to send to from the header.</Text>
-      ) : null}
-    </ScrollView>
-  );
-}
-
-const STEP_TONE = { done: colors.success, active: colors.accent, waiting: colors.warning, failed: colors.danger, idle: colors.textFaint };
-
-function Step({ label, state }: { label: string; state: keyof typeof STEP_TONE }) {
-  return (
-    <View style={styles.step}>
-      <View style={[styles.stepDot, { backgroundColor: STEP_TONE[state] }]} />
-      <Text style={[type.caption, state === "idle" && { color: colors.textFaint }, state !== "idle" && { color: colors.text }]}>{label}</Text>
+    <View style={styles.header}>
+      <Pressable
+        style={({ pressed }) => [styles.headerTarget, pressed && paired && { opacity: 0.7 }]}
+        onPress={() => paired && c.setView("threads")}
+        disabled={!paired}
+        accessibilityRole="button"
+        accessibilityLabel={`T3 thread: ${title}. ${conn.label}`}
+      >
+        <View style={[styles.liveDot, { backgroundColor: conn.color }]} />
+        <Text style={[styles.headerTitle, !thread && connected && { color: colors.warning }]} numberOfLines={1}>
+          {title}
+        </Text>
+        {paired ? <Text style={styles.caret}>▾</Text> : null}
+      </Pressable>
+      {paired ? <IconButton glyph="⋯" label="Settings and connection" onPress={() => c.setView("settings")} size={34} /> : null}
+      <IconButton glyph="✕" label="Close inspector" onPress={c.close} size={34} />
     </View>
   );
 }
 
-function RequestStatus({ request, c }: { request: TrackedRequest; c: PanelController }) {
-  const agent = agentStep(request);
-  const refresh = refreshStep(request);
-  const delivered = !!(request.seen.submitted || request.seen.agent_working || request.seen.agent_completed);
-  const failed = request.phase === "failed" || request.phase === "cancelled";
+function SubHeader({ c, title }: { c: PanelController; title: string }) {
   return (
-    <View style={styles.card} accessibilityLiveRegion="polite">
-      <View style={styles.rowBetween}>
-        <Text style={type.label}>Request</Text>
-        <Text style={[type.caption, failed && { color: colors.danger }]}>{PHASE_LABELS[request.phase]}</Text>
-      </View>
-      <Text style={[type.body, { marginTop: space.xs }]} numberOfLines={2}>
-        {request.instruction}
+    <View style={styles.header}>
+      <IconButton glyph="‹" label="Back" onPress={() => c.setView("main")} size={34} />
+      <Text style={[styles.headerTitle, { flex: 1 }]} numberOfLines={1}>
+        {title}
       </Text>
-      <View style={[styles.row, { marginTop: space.sm, gap: space.md, flexWrap: "wrap" }]}>
-        <Step label={request.seen.queued && !delivered ? "Queued" : "Delivered"} state={failed && !delivered ? "failed" : delivered ? "done" : "active"} />
-        <Step
-          label={agent === "waiting" ? "Needs input" : agent === "completed" ? "Agent done" : agent === "failed" ? "Agent failed" : "Agent"}
-          state={agent === "completed" ? "done" : agent === "working" ? "active" : agent === "waiting" ? "waiting" : agent === "failed" ? "failed" : "idle"}
-        />
-        <Step label="Files changed" state={refresh !== "none" ? "done" : "idle"} />
-        <Step
-          label={refresh === "native" ? "Rebuild needed" : refresh === "failed" ? "Refresh failed" : "Refreshed"}
-          state={refresh === "observed" ? "done" : refresh === "failed" ? "failed" : refresh === "native" ? "waiting" : "idle"}
-        />
+      <IconButton glyph="✕" label="Close inspector" onPress={c.close} size={34} />
+    </View>
+  );
+}
+
+// --- main ----------------------------------------------------------------------------------------
+
+function MainView({ c, compact }: { c: PanelController; compact: boolean }) {
+  const { state } = c;
+  const active = state.activeRequestId ? state.requests[state.activeRequestId] : undefined;
+  const earlier = state.history
+    .filter((id) => id !== state.activeRequestId)
+    .map((id) => state.requests[id])
+    .filter((r): r is TrackedRequest => !!r);
+  const offline = c.connection.status === "disconnected" || c.connection.status === "failed" || c.connection.status === "connecting";
+
+  return (
+    <View style={styles.main}>
+      <SelectionStrip selection={state.selection} c={c} />
+      {offline ? (
+        <Notice tone={colors.warning} text={connectionSummary(c.connection).label} action={{ label: "Retry", onPress: c.reconnect }} />
+      ) : null}
+      <ScrollView style={styles.feed} contentContainerStyle={styles.feedContent} keyboardShouldPersistTaps="handled">
+        {active ? compact ? <ActiveLine request={active} /> : <ActiveRequest request={active} c={c} /> : null}
+        {earlier.length > 0 && !compact ? (
+          <View style={{ marginTop: active ? space.lg : 0 }}>
+            <Text style={styles.sectionLabel}>Earlier</Text>
+            {earlier.map((request) => (
+              <EarlierRow key={request.requestId} request={request} c={c} />
+            ))}
+          </View>
+        ) : null}
+        {!active && earlier.length === 0 ? (
+          <Text style={styles.empty}>
+            {state.selection ? "Describe the change below." : "Select an element, then describe the change."}
+          </Text>
+        ) : null}
+      </ScrollView>
+      <Composer c={c} />
+    </View>
+  );
+}
+
+function SelectionStrip({ selection, c }: { selection: Selection | null; c: PanelController }) {
+  if (!selection) {
+    return (
+      <Pressable onPress={c.reselect} style={({ pressed }) => [styles.strip, pressed && styles.stripPressed]} accessibilityRole="button" accessibilityLabel="Select an element">
+        <Text style={styles.stripGlyph}>⌖</Text>
+        <Text style={[styles.stripText, { color: colors.textMuted }]}>Select an element</Text>
+      </Pressable>
+    );
+  }
+  const tone = selection.confidence === "high" ? colors.success : selection.confidence === "medium" ? colors.warning : colors.danger;
+  const where = selection.source ? `${selection.source.file.split("/").pop()}:${selection.source.line}` : "no source";
+  return (
+    <View style={styles.strip}>
+      <Pressable
+        onPress={c.reselect}
+        style={styles.stripMain}
+        accessibilityRole="button"
+        accessibilityLabel={`Selected ${selection.componentName ?? ""} ${selection.elementType}, ${where}, ${selection.confidence} confidence. Tap to reselect.`}
+      >
+        <View style={[styles.confDot, { backgroundColor: tone }]} />
+        <Text style={styles.stripText} numberOfLines={1}>
+          {selection.componentName ? <Text style={{ color: colors.textMuted }}>{selection.componentName} › </Text> : null}
+          {selection.elementType}
+        </Text>
+        <Text style={styles.stripPath} numberOfLines={1} ellipsizeMode="head">
+          {where}
+        </Text>
+      </Pressable>
+      <IconButton glyph="✕" label="Clear selection" onPress={c.clearSelection} size={28} />
+    </View>
+  );
+}
+
+function ActiveRequest({ request, c }: { request: TrackedRequest; c: PanelController }) {
+  const stages = requestLifecycle(request);
+  return (
+    <View accessibilityLiveRegion="polite">
+      <View style={styles.requestHead}>
+        <Text style={styles.instruction} numberOfLines={2}>
+          {request.instruction}
+        </Text>
+        <View style={styles.inlineActions}>
+          {canCancel(request) ? <TextAction label="Cancel" tone={colors.danger} onPress={() => c.cancelRequest(request.requestId)} /> : null}
+          {canRetry(request) ? <TextAction label="Retry" onPress={() => c.retryRequest(request.requestId)} /> : null}
+          <IconButton glyph="✕" label="Dismiss request" onPress={c.dismissRequest} size={26} />
+        </View>
+      </View>
+      <View style={styles.rail}>
+        {stages.map((stage, index) => (
+          <RailRow key={stage.key} stage={stage} origin={request.createdAt} last={index === stages.length - 1} />
+        ))}
       </View>
       {request.detail ? (
-        <Text style={[type.caption, { marginTop: space.sm }]} numberOfLines={4}>
+        <Text style={styles.detail} numberOfLines={3} selectable>
           {request.detail}
         </Text>
       ) : null}
       {request.changedFiles?.length ? (
-        <Text style={[type.code, { color: colors.textMuted, marginTop: space.xs }]} numberOfLines={3}>
-          {request.changedFiles.slice(0, 4).join("\n")}
+        <Text style={styles.files} numberOfLines={3} ellipsizeMode="head">
+          {request.changedFiles.slice(0, 3).join("\n")}
+          {request.changedFiles.length > 3 ? `\n+${request.changedFiles.length - 3} more` : ""}
         </Text>
       ) : null}
-      <View style={[styles.row, { marginTop: space.sm, gap: space.sm }]}>
-        {canCancel(request) ? <Button compact variant="danger" label="Cancel request" onPress={() => c.cancelRequest(request.requestId)} /> : null}
-        {canRetry(request) ? <Button compact label="Retry" onPress={() => c.retryRequest(request.requestId)} /> : null}
-        <Button compact variant="ghost" label="Dismiss" onPress={c.dismissRequest} />
+    </View>
+  );
+}
+
+/** ¼ height: one live line — the instruction and the step it is on now. */
+function ActiveLine({ request }: { request: TrackedRequest }) {
+  const stages = requestLifecycle(request);
+  const now =
+    stages.find((s) => s.state === "failed" || s.state === "waiting" || s.state === "active") ??
+    [...stages].reverse().find((s) => s.state === "done") ??
+    stages[0];
+  return (
+    <View style={styles.earlierRow} accessibilityLiveRegion="polite">
+      <View style={[styles.confDot, { backgroundColor: STAGE_TONE[now?.state ?? "pending"] }]} />
+      <Text style={[styles.earlierText, { color: colors.text }]} numberOfLines={1}>
+        {request.instruction}
+      </Text>
+      <Text style={[styles.railTime, { color: STAGE_TONE[now?.state ?? "pending"] }]} numberOfLines={1}>
+        {now?.label}
+      </Text>
+    </View>
+  );
+}
+
+function RailRow({ stage, origin, last }: { stage: LifecycleStage; origin: number; last: boolean }) {
+  const tone = STAGE_TONE[stage.state];
+  const reached = stage.state !== "pending";
+  return (
+    <View style={styles.railRow} accessibilityLabel={`${stage.label}, ${stage.state}`}>
+      <View style={styles.railTrack}>
+        <View
+          style={[
+            styles.railDot,
+            reached ? { backgroundColor: tone, borderColor: tone } : { borderColor: colors.borderStrong },
+            stage.state === "active" && styles.railDotActive,
+          ]}
+        />
+        {!last ? <View style={[styles.railLine, stage.state === "done" && { backgroundColor: "rgba(61,214,140,0.35)" }]} /> : null}
+      </View>
+      <Text style={[styles.railLabel, !reached && { color: colors.textFaint }, stage.state === "failed" && { color: colors.danger }]} numberOfLines={1}>
+        {stage.label}
+      </Text>
+      <Text style={styles.railTime}>{stage.at && stage.key !== "sent" ? formatElapsed(stage.at - origin) : ""}</Text>
+    </View>
+  );
+}
+
+function EarlierRow({ request, c }: { request: TrackedRequest; c: PanelController }) {
+  const outcome = requestOutcome(request);
+  return (
+    <View style={styles.earlierRow}>
+      <View style={[styles.confDot, { backgroundColor: STAGE_TONE[outcome] }]} />
+      <Text style={styles.earlierText} numberOfLines={1}>
+        {request.instruction}
+      </Text>
+      {canRetry(request) ? (
+        <TextAction label="Retry" onPress={() => c.retryRequest(request.requestId)} />
+      ) : (
+        <Text style={styles.railTime}>{formatAgo(request.updatedAt)}</Text>
+      )}
+    </View>
+  );
+}
+
+function formatAgo(at: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (seconds < 60) return "now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3600)}h`;
+}
+
+function Composer({ c }: { c: PanelController }) {
+  const { state, speech } = c;
+  const listening = speech.status === "listening" || speech.status === "starting";
+  const speechBlocked = !!speech.support && !speech.support.ok;
+  const canSubmit = state.transcript.trim().length > 0 && !!c.selectedThreadId;
+  // Only explain dictation problems once the mic has been tried; the dimmed mic is the hint.
+  const speechNotice = speech.error;
+  const hint =
+    state.error ??
+    (!c.selectedThreadId && c.connection.status === "connected" && state.transcript.trim() ? "Choose a thread first: tap the title." : null);
+
+  return (
+    <View style={styles.composerWrap}>
+      {speechNotice ? (
+        <Notice
+          flush
+          tone={colors.warning}
+          text={speechNotice}
+          action={
+            speech.onlineAvailable
+              ? { label: "Use online", onPress: c.allowOnlineSpeech }
+              : speech.support?.canDownloadModel
+                ? { label: "Get model", onPress: c.downloadSpeechModel }
+                : undefined
+          }
+        />
+      ) : null}
+      {hint ? (
+        <Text style={[styles.hint, !!state.error && { color: colors.danger }]} numberOfLines={2}>
+          {hint}
+        </Text>
+      ) : null}
+      <View style={[styles.composer, listening && styles.composerListening]}>
+        <TextInput
+          value={listening && speech.partial ? `${state.transcript}${state.transcript ? " " : ""}${speech.partial}` : state.transcript}
+          onChangeText={c.setTranscript}
+          editable={!listening}
+          placeholder={listening ? `Listening · ${speech.onDevice ? "on device" : "online"}` : "Describe the change…"}
+          placeholderTextColor={listening ? colors.danger : colors.textFaint}
+          multiline
+          style={styles.input}
+          accessibilityLabel="Instruction"
+        />
+        <Pressable
+          onPress={c.toggleMic}
+          onLongPress={c.micPressIn}
+          onPressOut={c.micPressOut}
+          delayLongPress={250}
+          hitSlop={4}
+          accessibilityRole="button"
+          accessibilityLabel={listening ? "Stop dictation" : "Start dictation"}
+          accessibilityHint={speechBlocked ? "Dictation is unavailable; tap for details" : "Tap to toggle, or press and hold to talk"}
+          style={({ pressed }) => [styles.roundBtn, listening ? styles.micLive : styles.micIdle, pressed && { opacity: 0.8 }, speechBlocked && { opacity: 0.3 }]}
+        >
+          <Text style={[styles.roundGlyph, !listening && { color: colors.textMuted }]}>{listening ? "■" : "🎙"}</Text>
+        </Pressable>
+        <Pressable
+          onPress={c.submit}
+          disabled={!canSubmit}
+          hitSlop={4}
+          accessibilityRole="button"
+          accessibilityLabel={c.connection.status === "connected" ? "Send to agent" : "Queue until connected"}
+          accessibilityState={{ disabled: !canSubmit }}
+          style={({ pressed }) => [styles.roundBtn, styles.send, pressed && { backgroundColor: colors.accentPressed }, !canSubmit && styles.sendDisabled]}
+        >
+          <Text style={styles.roundGlyph}>↑</Text>
+        </Pressable>
       </View>
     </View>
   );
 }
 
+function Notice({ tone, text, action, flush }: { tone: string; text: string; action?: { label: string; onPress(): void } | undefined; flush?: boolean }) {
+  return (
+    <View style={[styles.notice, flush && { marginHorizontal: 0, marginTop: 0 }]}>
+      <View style={[styles.confDot, { backgroundColor: tone }]} />
+      <Text style={styles.noticeText} numberOfLines={2}>
+        {text}
+      </Text>
+      {action ? <TextAction label={action.label} onPress={action.onPress} /> : null}
+    </View>
+  );
+}
+
+function TextAction({ label, onPress, tone = colors.accent }: { label: string; onPress(): void; tone?: string }) {
+  return (
+    <Pressable onPress={onPress} hitSlop={10} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => [styles.textAction, pressed && { opacity: 0.6 }]}>
+      <Text style={[styles.textActionLabel, { color: tone === colors.accent ? "#B9AFFF" : tone }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+// --- threads -------------------------------------------------------------------------------------
+
 function ThreadsView({ c }: { c: PanelController }) {
   return (
-    <ScrollView style={styles.body} contentContainerStyle={{ gap: space.xs }}>
-      <View style={styles.rowBetween}>
-        <Text style={type.label}>T3 threads in this project</Text>
-        <Button compact variant="ghost" label="Refresh" onPress={c.refreshThreads} />
-      </View>
-      {c.threadsError ? <Text style={[type.caption, { color: colors.danger }]}>{c.threadsError}</Text> : null}
-      {c.threads.length === 0 && !c.threadsError ? <Text style={type.caption}>No threads found. Start one in T3 Code for this project.</Text> : null}
+    <ScrollView style={styles.feed} contentContainerStyle={styles.feedContent}>
+      {c.threadsError ? <Notice tone={colors.danger} text={c.threadsError} action={{ label: "Retry", onPress: c.refreshThreads }} /> : null}
+      {c.threads.length === 0 && !c.threadsError ? (
+        <Text style={styles.empty}>No threads. Start one in T3 Code for this project.</Text>
+      ) : null}
       {c.threads.map((thread) => {
         const selected = thread.threadId === c.selectedThreadId;
         return (
@@ -328,85 +510,55 @@ function ThreadsView({ c }: { c: PanelController }) {
             onPress={() => c.selectThread(thread.threadId)}
             accessibilityRole="button"
             accessibilityState={{ selected }}
-            style={({ pressed }) => [styles.threadRow, selected && styles.threadRowSelected, pressed && { opacity: 0.8 }]}
+            style={({ pressed }) => [styles.listRow, pressed && styles.stripPressed]}
           >
-            <View style={{ flex: 1 }}>
-              <Text style={type.body} numberOfLines={1}>
-                {thread.title || thread.threadId}
-              </Text>
-              <Text style={type.caption} numberOfLines={1}>
-                {thread.status}
-                {thread.model ? ` · ${thread.model}` : ""}
-              </Text>
-            </View>
-            {selected ? <Badge label="target" tone="accent" /> : null}
+            <Text style={[styles.check, !selected && { opacity: 0 }]}>✓</Text>
+            <Text style={[styles.listLabel, { flex: 1 }]} numberOfLines={1}>
+              {thread.title || thread.threadId}
+            </Text>
+            <Text style={styles.listValue} numberOfLines={1}>
+              {thread.status}
+            </Text>
           </Pressable>
         );
       })}
-    </ScrollView>
-  );
-}
-
-function HistoryView({ c }: { c: PanelController }) {
-  const items = c.state.history.map((id) => c.state.requests[id]).filter((r): r is TrackedRequest => !!r);
-  return (
-    <ScrollView style={styles.body} contentContainerStyle={{ gap: space.sm }}>
-      <Text style={type.label}>Recent instructions</Text>
-      {items.length === 0 ? <Text style={type.caption}>Nothing sent yet.</Text> : null}
-      {items.map((request) => (
-        <View key={request.requestId} style={styles.historyRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={type.body} numberOfLines={2}>
-              {request.instruction}
-            </Text>
-            <Text style={type.caption} numberOfLines={1}>
-              {request.componentName ? `${request.componentName} · ` : ""}
-              {PHASE_LABELS[request.phase]}
-            </Text>
-          </View>
-          {canRetry(request) ? <Button compact label="Retry" onPress={() => c.retryRequest(request.requestId)} /> : null}
-        </View>
-      ))}
-    </ScrollView>
-  );
-}
-
-function SettingRow({ label, hint, value, onChange, disabled }: { label: string; hint?: string; value: boolean; onChange(v: boolean): void; disabled?: boolean }) {
-  return (
-    <View style={styles.settingRow}>
-      <View style={{ flex: 1 }}>
-        <Text style={type.body}>{label}</Text>
-        {hint ? <Text style={type.caption}>{hint}</Text> : null}
+      <View style={{ marginTop: space.sm, alignItems: "flex-start" }}>
+        <TextAction label="Refresh list" onPress={c.refreshThreads} />
       </View>
-      <Switch
-        value={value}
-        onValueChange={onChange}
-        disabled={disabled}
-        trackColor={{ true: colors.accent, false: "#3A404D" }}
-        thumbColor="#FFFFFF"
-        accessibilityLabel={label}
-      />
-    </View>
+    </ScrollView>
   );
 }
 
-function SettingsView({ c }: { c: PanelController }) {
+// --- settings menu -------------------------------------------------------------------------------
+
+function MenuView({ c }: { c: PanelController }) {
   const { settings } = c.state;
+  const thread = c.threads.find((t) => t.threadId === c.selectedThreadId);
   const steerSupported = c.connection.status === "connected" && c.connection.capabilities.steer;
   const modes: DeliveryMode[] = ["queue", "auto", "steer"];
+  const conn = connectionSummary(c.connection);
+  const reason = c.connection.status === "disconnected" || c.connection.status === "failed" ? c.connection.reason : undefined;
   return (
-    <ScrollView style={styles.body} contentContainerStyle={{ gap: space.md }}>
-      <SettingRow
+    <ScrollView style={styles.feed} contentContainerStyle={styles.feedContent}>
+      <Text style={styles.sectionLabel}>Request</Text>
+      <Pressable onPress={() => c.setView("threads")} style={({ pressed }) => [styles.listRow, pressed && styles.stripPressed]} accessibilityRole="button">
+        <Text style={styles.listLabel}>Thread</Text>
+        <Text style={[styles.listValue, { flex: 1 }]} numberOfLines={1}>
+          {thread ? thread.title || thread.threadId : "None"}
+        </Text>
+        <Text style={styles.caret}>›</Text>
+      </Pressable>
+      <ToggleRow
         label="Attach screenshot"
-        hint={c.screenshotsAvailable ? "Compact JPEG of the app (inspector hidden)" : "Install react-native-view-shot to enable"}
         value={settings.screenshots && c.screenshotsAvailable}
         disabled={!c.screenshotsAvailable}
+        note={c.screenshotsAvailable ? undefined : "needs view-shot"}
         onChange={(v) => c.setSetting("screenshots", v)}
       />
-      <SettingRow label="Auto-submit after dictation" hint="Send as soon as the final transcript arrives" value={settings.autoSubmit} onChange={(v) => c.setSetting("autoSubmit", v)} />
-      <View>
-        <Text style={type.label}>Delivery</Text>
-        <View style={[styles.segment, { marginTop: space.xs }]}>
+      <ToggleRow label="Send after dictation" value={settings.autoSubmit} onChange={(v) => c.setSetting("autoSubmit", v)} />
+      <View style={styles.listRow}>
+        <Text style={[styles.listLabel, { flex: 1 }]}>Delivery</Text>
+        <View style={styles.segment}>
           {modes.map((mode) => {
             const disabled = mode === "steer" && !steerSupported;
             const selected = settings.mode === mode;
@@ -416,44 +568,67 @@ function SettingsView({ c }: { c: PanelController }) {
                 disabled={disabled}
                 onPress={() => c.setSetting("mode", mode)}
                 accessibilityRole="button"
+                accessibilityLabel={`Delivery ${mode}`}
                 accessibilityState={{ selected, disabled }}
-                style={[styles.segmentItem, selected && styles.segmentSelected, disabled && { opacity: 0.35 }]}
+                style={[styles.segmentItem, selected && styles.segmentSelected, disabled && { opacity: 0.3 }]}
               >
-                <Text style={[type.caption, selected && { color: colors.text, fontWeight: "600" }]}>{mode}</Text>
+                <Text style={[styles.segmentText, selected && { color: colors.text }]}>{mode}</Text>
               </Pressable>
             );
           })}
         </View>
-        <Text style={[type.caption, { marginTop: space.xs }]}>
-          {steerSupported ? "Queue waits for the current turn; steer joins it." : "Queue delivers as the thread's next turn and never interrupts. Steering is not offered by this agent adapter."}
-        </Text>
       </View>
-      <View style={styles.card}>
-        <Text style={type.label}>Connection</Text>
-        <Detail k="Bridge" v={c.bridgeUrl ?? "unknown"} />
-        <Detail k="Project" v={c.projectId} />
-        <Detail k="Status" v={connectionSummary(c.connection).label + (c.connection.status === "disconnected" && c.connection.reason ? ` (${c.connection.reason})` : c.connection.status === "failed" ? ` (${c.connection.reason})` : "")} />
-        {c.connection.status === "connected" ? <Detail k="Adapter" v={c.connection.capabilities.adapter} /> : null}
-        <Detail k="Fast Refresh" v={c.refreshSupported ? "observed" : "not observable"} />
-        <View style={[styles.row, { gap: space.sm, marginTop: space.sm }]}>
-          <Button compact label="Reconnect" onPress={c.reconnect} />
-          <Button compact variant="danger" label="Unpair" onPress={c.unpair} />
-        </View>
+
+      <Text style={[styles.sectionLabel, { marginTop: space.lg }]}>Connection</Text>
+      <View style={styles.listRow}>
+        <View style={[styles.confDot, { backgroundColor: conn.color }]} />
+        <Text style={[styles.listLabel, { flex: 1 }]} numberOfLines={1}>
+          {conn.label}
+        </Text>
+        <TextAction label="Reconnect" onPress={c.reconnect} />
+      </View>
+      {reason ? <Text style={styles.hint}>{reason}</Text> : null}
+      <KeyValue k="Bridge" v={c.bridgeUrl ?? "unknown"} />
+      <KeyValue k="Project" v={c.projectId} />
+      {c.connection.status === "connected" ? <KeyValue k="Adapter" v={c.connection.capabilities.adapter} /> : null}
+      <KeyValue k="Fast Refresh" v={c.refreshSupported ? "observed" : "not observable"} />
+      <View style={{ marginTop: space.md, alignItems: "flex-start" }}>
+        <TextAction label="Unpair this device" tone={colors.danger} onPress={c.unpair} />
       </View>
     </ScrollView>
   );
 }
 
-function Detail({ k, v }: { k: string; v: string }) {
+function ToggleRow({ label, value, onChange, disabled, note }: { label: string; value: boolean; onChange(v: boolean): void; disabled?: boolean; note?: string | undefined }) {
   return (
-    <View style={[styles.rowBetween, { marginTop: space.xs }]}>
-      <Text style={type.caption}>{k}</Text>
-      <Text style={[type.code, { flexShrink: 1, marginLeft: space.md }]} numberOfLines={1} ellipsizeMode="middle">
+    <View style={styles.listRow}>
+      <Text style={[styles.listLabel, { flex: 1 }, disabled && { color: colors.textFaint }]}>{label}</Text>
+      {note ? <Text style={styles.listValue}>{note}</Text> : null}
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        disabled={disabled}
+        trackColor={{ true: colors.accent, false: "#2E3340" }}
+        thumbColor="#FFFFFF"
+        accessibilityLabel={label}
+        style={styles.switch}
+      />
+    </View>
+  );
+}
+
+function KeyValue({ k, v }: { k: string; v: string }) {
+  return (
+    <View style={styles.kvRow}>
+      <Text style={styles.kvKey}>{k}</Text>
+      <Text style={styles.kvValue} numberOfLines={1} ellipsizeMode="middle" selectable>
         {v}
       </Text>
     </View>
   );
 }
+
+// --- pairing -------------------------------------------------------------------------------------
 
 type LinkCheck = { state: "idle" } | { state: "checking"; url: string } | { state: "done"; probe: BridgeProbe };
 
@@ -494,15 +669,15 @@ function LinkStatus({ check, onRetest }: { check: LinkCheck; onRetest(): void })
     check.state === "checking"
       ? `Checking ${check.url}…`
       : check.probe.ok
-        ? `Reached expo-ai-bridge ${check.probe.version} at ${check.probe.url}`
+        ? `Reached expo-ai-bridge ${check.probe.version}`
         : check.probe.detail;
   return (
     <View style={styles.linkStatus} accessibilityLiveRegion="polite">
-      <StatusDot color={tone} />
-      <Text style={[type.caption, { flex: 1, color: failed ? colors.danger : colors.textMuted }]} selectable>
+      <View style={[styles.confDot, { backgroundColor: tone, marginTop: 5 }]} />
+      <Text style={[styles.hint, { flex: 1, marginTop: 0 }, failed && { color: colors.danger }]} selectable>
         {text}
       </Text>
-      {check.state === "done" ? <Button compact label="Test again" onPress={onRetest} /> : null}
+      {check.state === "done" ? <TextAction label="Test" onPress={onRetest} /> : null}
     </View>
   );
 }
@@ -532,11 +707,11 @@ function PairView({ c }: { c: PanelController }) {
       setBusy(false);
     }
   };
+  const ready = !busy && code.length === 6;
   return (
-    <ScrollView style={styles.body} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.md }}>
-      <Text style={type.body}>Pair with the bridge running on your computer.</Text>
+    <ScrollView style={styles.feed} keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.feedContent, { gap: space.md }]}>
       <View>
-        <Text style={type.label}>Bridge URL</Text>
+        <Text style={styles.sectionLabel}>Bridge URL</Text>
         <TextInput
           value={url}
           onChangeText={(text) => {
@@ -554,7 +729,7 @@ function PairView({ c }: { c: PanelController }) {
         <LinkStatus check={check} onRetest={retest} />
       </View>
       <View>
-        <Text style={type.label}>Pairing code</Text>
+        <Text style={styles.sectionLabel}>Pairing code</Text>
         <TextInput
           value={code}
           onChangeText={(text) => setCode(text.replace(/\D/g, "").slice(0, 6))}
@@ -565,68 +740,169 @@ function PairView({ c }: { c: PanelController }) {
           maxLength={6}
           accessibilityLabel="Pairing code"
         />
-        <Text style={[type.caption, { marginTop: space.xs }]}>
-          Printed in the bridge terminal. Expired? Press p there, or run{" "}
-          <Text style={styles.inlineCode}>expo-ai-bridge pair-code</Text>.
+        <Text style={styles.hint}>
+          From the bridge terminal. Expired? Press p there, or run <Text style={styles.inlineCode}>expo-ai-bridge pair-code</Text>.
         </Text>
       </View>
       {error ? (
-        <Text style={[type.caption, { color: colors.danger }]} selectable>
+        <Text style={[styles.hint, { color: colors.danger, marginTop: 0 }]} selectable>
           {error}
         </Text>
       ) : null}
-      <Button variant="primary" label={busy ? "Pairing…" : "Pair"} disabled={busy || code.length !== 6} onPress={onPair} />
+      <Pressable
+        onPress={onPair}
+        disabled={!ready}
+        accessibilityRole="button"
+        accessibilityLabel="Pair"
+        accessibilityState={{ disabled: !ready }}
+        style={({ pressed }) => [styles.pairBtn, pressed && { backgroundColor: colors.accentPressed }, !ready && styles.sendDisabled]}
+      >
+        <Text style={styles.pairLabel}>{busy ? "Pairing…" : "Pair"}</Text>
+      </Pressable>
     </ScrollView>
   );
 }
 
+// --- styles --------------------------------------------------------------------------------------
+
+const ROW = 40;
+
 const styles = StyleSheet.create({
-  panel: {
+  sheet: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    maxHeight: "72%",
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.lg + 4,
-    borderTopRightRadius: radius.lg + 4,
+    // Opaque: the app must not bleed through behind the event rail.
+    backgroundColor: "#111319",
+    borderTopLeftRadius: radius.lg + 6,
+    borderTopRightRadius: radius.lg + 6,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
   },
-  grabber: { alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong, marginTop: space.sm },
-  header: { flexDirection: "row", alignItems: "center", gap: space.xs, paddingVertical: space.sm },
-  headerTarget: { flex: 1, flexDirection: "row", alignItems: "center", gap: space.sm, paddingVertical: space.xs },
-  chevron: { color: colors.textMuted, fontSize: 12 },
-  body: { flexGrow: 0 },
-  card: { backgroundColor: colors.surfaceRaised, borderRadius: radius.md, padding: space.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  row: { flexDirection: "row", alignItems: "center" },
-  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm },
-  inputWrap: {
+  grabberZone: { alignItems: "center", paddingTop: space.sm, paddingBottom: 2 },
+  grabber: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderStrong },
+  header: { flexDirection: "row", alignItems: "center", paddingLeft: space.sm, paddingRight: space.xs, height: 44 },
+  headerTarget: { flex: 1, flexDirection: "row", alignItems: "center", gap: space.sm, paddingHorizontal: space.sm, height: 40 },
+  headerTitle: { ...type.title, fontSize: 15, flexShrink: 1 },
+  liveDot: { width: 8, height: 8, borderRadius: 4 },
+  caret: { color: colors.textFaint, fontSize: 12 },
+
+  main: { flex: 1 },
+  feed: { flex: 1 },
+  feedContent: { paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.md },
+  sectionLabel: { ...type.label, fontSize: 10, color: colors.textFaint, marginBottom: space.xs },
+  empty: { ...type.caption, color: colors.textFaint, paddingVertical: space.md },
+
+  strip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    paddingLeft: space.md,
+    paddingRight: space.xs,
+    height: ROW,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  stripPressed: { backgroundColor: "rgba(255,255,255,0.05)" },
+  stripMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: space.sm, height: ROW },
+  stripGlyph: { color: "#B9AFFF", fontSize: 16 },
+  stripText: { fontSize: 14, fontWeight: "600", color: colors.text, flexShrink: 1 },
+  stripPath: { fontFamily: mono, fontSize: 11, color: colors.textFaint, flexShrink: 2, marginLeft: "auto" },
+  confDot: { width: 7, height: 7, borderRadius: 4 },
+
+  requestHead: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, marginBottom: space.sm },
+  instruction: { flex: 1, fontSize: 14, lineHeight: 19, color: colors.text, fontWeight: "500" },
+  inlineActions: { flexDirection: "row", alignItems: "center", gap: space.xs, marginTop: -4 },
+
+  rail: { paddingLeft: 2 },
+  railRow: { flexDirection: "row", alignItems: "center", height: 26, gap: space.md },
+  railTrack: { width: 10, height: 26, alignItems: "center", justifyContent: "center" },
+  railDot: { width: 9, height: 9, borderRadius: 5, borderWidth: 1.5, backgroundColor: "transparent", zIndex: 1 },
+  railDotActive: { shadowColor: colors.accent, shadowOpacity: 0.9, shadowRadius: 5, shadowOffset: { width: 0, height: 0 }, elevation: 3 },
+  railLine: { position: "absolute", top: 17.5, bottom: -9, width: 1.5, backgroundColor: colors.border },
+  railLabel: { flex: 1, fontSize: 13, color: colors.text },
+  railTime: { fontFamily: mono, fontSize: 11, color: colors.textFaint, fontVariant: ["tabular-nums"] },
+  detail: { ...type.caption, marginTop: space.sm },
+  files: { fontFamily: mono, fontSize: 11, lineHeight: 16, color: colors.textMuted, marginTop: space.xs },
+
+  earlierRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    height: 34,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  earlierText: { flex: 1, fontSize: 13, color: colors.textMuted },
+
+  composerWrap: {
+    paddingHorizontal: space.md,
+    paddingTop: space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  composer: {
     flexDirection: "row",
     alignItems: "flex-end",
+    gap: space.xs,
     backgroundColor: colors.surfaceSunken,
-    borderRadius: radius.md,
+    borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderStrong,
-    padding: space.xs,
-    paddingLeft: space.md,
+    paddingLeft: space.lg,
+    padding: 4,
   },
-  input: { flex: 1, minHeight: 44, maxHeight: 120, color: colors.text, fontSize: 15, paddingVertical: space.sm, textAlignVertical: "top" },
-  mic: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center", marginLeft: space.xs },
-  micActive: { backgroundColor: colors.danger },
-  micGlyph: { fontSize: 18, color: "#fff" },
-  step: { flexDirection: "row", alignItems: "center", gap: 6 },
-  stepDot: { width: 7, height: 7, borderRadius: 4 },
-  threadRow: { flexDirection: "row", alignItems: "center", gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceRaised },
-  threadRowSelected: { borderWidth: 1, borderColor: colors.accent },
-  historyRow: { flexDirection: "row", alignItems: "center", gap: space.sm, paddingVertical: space.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  settingRow: { flexDirection: "row", alignItems: "center", gap: space.md },
-  segment: { flexDirection: "row", backgroundColor: colors.surfaceSunken, borderRadius: radius.md, padding: 3 },
-  segmentItem: { flex: 1, alignItems: "center", paddingVertical: space.sm, borderRadius: radius.sm },
+  composerListening: { borderColor: colors.danger },
+  input: { flex: 1, minHeight: 36, maxHeight: 96, color: colors.text, fontSize: 15, paddingVertical: 8, textAlignVertical: "top" },
+  roundBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  micIdle: { backgroundColor: "transparent" },
+  micLive: { backgroundColor: colors.danger },
+  send: { backgroundColor: colors.accent },
+  sendDisabled: { backgroundColor: "#2A2F3B", opacity: 0.7 },
+  roundGlyph: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
+  hint: { ...type.caption, color: colors.textMuted, marginTop: space.xs, marginBottom: space.xs, paddingHorizontal: space.xs },
+
+  notice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginTop: space.sm,
+    marginBottom: space.xs,
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: "rgba(245,184,65,0.08)",
+  },
+  noticeText: { flex: 1, fontSize: 12, lineHeight: 16, color: colors.text },
+  textAction: { paddingHorizontal: 6, paddingVertical: 4 },
+  textActionLabel: { fontSize: 13, fontWeight: "600" },
+
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    minHeight: 44,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  listLabel: { fontSize: 14, color: colors.text },
+  listValue: { fontSize: 13, color: colors.textMuted, textAlign: "right" },
+  check: { color: "#B9AFFF", fontSize: 14, width: 16 },
+  switch: { transform: [{ scale: 0.85 }] },
+  segment: { flexDirection: "row", backgroundColor: colors.surfaceSunken, borderRadius: radius.sm, padding: 2 },
+  segmentItem: { paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.sm - 2 },
   segmentSelected: { backgroundColor: colors.surfaceRaised },
+  segmentText: { fontSize: 12, fontWeight: "600", color: colors.textMuted },
+  kvRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", height: 28, gap: space.md },
+  kvKey: { fontSize: 12, color: colors.textFaint },
+  kvValue: { fontFamily: mono, fontSize: 11, color: colors.textMuted, flexShrink: 1 },
+
   field: {
-    marginTop: space.xs,
     backgroundColor: colors.surfaceSunken,
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
@@ -637,6 +913,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   codeField: { fontFamily: mono, fontSize: 22, letterSpacing: 8, textAlign: "center" },
-  linkStatus: { flexDirection: "row", alignItems: "center", gap: space.sm, marginTop: space.sm },
+  linkStatus: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, marginTop: space.sm },
   inlineCode: { fontFamily: mono, color: colors.text },
+  pairBtn: { height: 44, borderRadius: 22, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
+  pairLabel: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
 });
